@@ -80,7 +80,11 @@ For hosted uploads, set `CUTROOM_MEDIA_STORAGE=imagekit`, `IMAGEKIT_PUBLIC_KEY`,
 
 Uploads support MP4, MOV, WebM, M4A, MP3, WAV, and Ogg, up to 64 MiB and one hour per asset. The provider's account limits also apply. Clips can use ready footage immediately. Transcript status records whether the file has audio suitable for later transcription. The API checks for abandoned uploads at startup and every fifteen minutes. Unfinished uploads expire after 24 hours.
 
-The local browser suite tests a rotated MOV with real video decoding and byte-range reads. With ImageKit credentials configured, run `E2E_LIVE_IMAGEKIT=1 bun --env-file=apps/api/.env.local run test tests/imagekit-live.spec.ts` to upload a short synthetic portrait recording and verify its original, private thumbnail, and playback.
+The local browser suite tests a rotated MOV with real video decoding and byte-range reads. To verify a configured ImageKit account, run the following browser checks. They upload test footage, compare the downloaded original byte-for-byte, recover an interrupted edit, reopen the project in a mobile browser context, and render a private MP4.
+
+```sh
+E2E_LIVE_IMAGEKIT=1 bun --env-file=apps/api/.env.local run test tests/imagekit-live.spec.ts tests/media-workspace.spec.ts tests/project-export.spec.ts
+```
 
 ### Database and authentication
 

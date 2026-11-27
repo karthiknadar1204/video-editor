@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
-import { mediaClip, textClip } from "../packages/timeline/src/model";
+import { mediaClip, projectSnapshot, textClip } from "../packages/timeline/src/model";
 import { signup } from "./accounts";
 import { webOrigin } from "./local";
 
@@ -12,13 +12,17 @@ test("export downloads the saved portrait edit with private source media and rej
   const { id } = await create.json();
   const path = "/api/projects/" + id;
   const bytes = await readFile("apps/web/public/media/earthrise.mp4");
-  const reservation = await page.request.post(path + "/assets", { data: { name: "Orbit footage.mp4", size: bytes.length, type: "video/mp4" } });
-  expect(reservation.status()).toBe(201);
-  const { id: assetId, upload } = await reservation.json();
-  expect((await page.request.put(upload.url, { data: bytes, headers: { "Content-Type": "video/mp4" } })).status()).toBe(204);
-  expect((await page.request.post(path + "/assets/" + assetId, { data: {} })).status()).toBe(200);
+  await page.goto("/projects/" + id);
+  await page.getByRole("button", { name: "Add footage" }).click();
+  const library = page.getByRole("dialog", { name: "Media library" });
+  await library.getByLabel("Choose footage").setInputFiles({ name:"Orbit footage.mp4", mimeType:"video/mp4", buffer:bytes });
+  await expect(library.getByRole("button", { name:"Insert Orbit footage.mp4" })).toBeVisible({ timeout:60_000 });
+  await library.getByRole("button", { name: "Close media library" }).click();
+  const project = projectSnapshot.parse(await (await page.request.get(path)).json());
+  const asset = project.timeline.assets.find(a => a.name === "Orbit footage.mp4");
+  if (!asset) throw new Error("Uploaded footage is missing from the project.");
   const saved = await page.request.post(path + "/edits", { data: { kind: "edit", expectedRevision: 1, requestId: randomUUID(), operations: [
-    { type: "add", clip: { ...mediaClip("camera", assetId, 0, 30), fit: "contain" } },
+    { type: "add", clip: { ...mediaClip("camera", asset.id, 0, 30), fit: "contain" } },
     { type: "add", clip: { ...textClip("title", "LUNAR", 0, 30, 1280), x: 30, y: 40, color: "#ff3020" } },
   ] } });
   expect(saved.status()).toBe(200);
