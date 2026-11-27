@@ -14,11 +14,16 @@ export async function getProject(id: string, owner: string) {
     revision: project.revision, canUndo: hasEntry("applied"), canRedo: hasEntry("undone"),
   }).from(project).where(owned(id, owner));
   if (!row) return;
-  const entries = await db.select({ revision: projectEdit.revision, command: projectEdit.command, affected: projectEdit.affected })
-    .from(projectEdit).where(and(eq(projectEdit.projectId, id), lte(projectEdit.revision, row.revision)))
-    .orderBy(desc(projectEdit.revision)).limit(12);
-  const history = entries.map(e => ({ revision: e.revision, label: editLabel(e.command), from: e.affected?.from ?? null }));
+  const history = await editHistory(id, row.revision, 12);
   return { ...row, formatVersion: 2, timeline: readTimeline(row.formatVersion, row.timeline), history };
+}
+
+export async function editHistory(projectId: string, through: number, limit: number) {
+  const entries = await db.select({ revision: projectEdit.revision, command: projectEdit.command,
+    affected: projectEdit.affected, target: projectEdit.targetRevision })
+    .from(projectEdit).where(and(eq(projectEdit.projectId, projectId), lte(projectEdit.revision, through)))
+    .orderBy(desc(projectEdit.revision)).limit(limit);
+  return entries.map(e => ({ revision: e.revision, label: editLabel(e.command), from: e.affected?.from ?? null, target: e.target }));
 }
 
 export class HistoryError extends Error {

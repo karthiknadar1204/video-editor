@@ -6,7 +6,7 @@ import { projectExportDir } from "../../worker/paths";
 import { AllowanceError } from "./allowance";
 import { changeAttempt, changeShare, completedVersion, ExportError, getExport, listExports, startExport } from "./export-jobs";
 import { streamOutput } from "./export-storage";
-import { getProject } from "./history";
+import { editHistory, getProject } from "./history";
 import { serveLocalFile } from "./media-storage";
 
 export { prepareProject, renderSequence } from "./project-render";
@@ -68,6 +68,14 @@ projectExports.get("/:id/exports", async c => {
   return c.json(await listExports({ projectId: c.req.param("id"), ownerId: c.get("ownerId") }, offset.data));
 });
 projectExports.get("/:id/exports/:exportId", async c => c.json(await getExport({ ownerId: c.get("ownerId"), projectId: c.req.param("id"), exportId: c.req.param("exportId") })));
+projectExports.get("/:id/exports/:exportId/edits", async c => {
+  const projectId = c.req.param("id");
+  const version = await getExport({ ownerId: c.get("ownerId"), projectId, exportId: c.req.param("exportId") });
+  const through = number.safeParse(Number(c.req.query("through") ?? version.revision));
+  if (!through.success || through.data > version.revision) return c.json({ error: "Choose a revision within this export." }, 400);
+  const entries = await editHistory(projectId, through.data, 21);
+  return c.json({ edits: entries.slice(0, 20), nextRevision: entries[20]?.revision ?? null });
+});
 projectExports.get("/:id/exports/:exportId/file", async c => {
   const v = await completedVersion({ ownerId: c.get("ownerId"), projectId: c.req.param("id"), exportId: c.req.param("exportId") });
   return streamOutput(v, v.attempt, c.req.raw, true);

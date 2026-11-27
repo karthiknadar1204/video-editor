@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile, rename } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
@@ -44,6 +44,16 @@ test("two saved snapshots play with their own pixels and audio on a phone; revok
     return (await res.json()).watchPath as string;
   };
   const watchA = await watch(first.id), watchB = await watch(second.id);
+  await page.goto("/projects/" + path.split("/").at(-1));
+  await page.getByRole("button", { name: "Export history" }).click();
+  const history = page.getByRole("dialog", { name: "Export history" });
+  const original = history.getByRole("listitem").filter({ has: page.getByText("Revision 1", { exact: true }) });
+  await original.getByText("Edits in this version").click();
+  await expect(original.getByText("r1 · Insert clip")).toBeVisible();
+  await expect(original.getByText(/r2 ·/)).toHaveCount(0);
+  const updated = history.getByRole("listitem").filter({ has: page.getByText("Revision 2", { exact: true }) });
+  await updated.getByText("Edits in this version").click();
+  await expect(updated.getByText("r2 · Edit text + Style text")).toBeVisible();
   const guest = await browser.newContext({ ...devices["Pixel 7"], baseURL: webOrigin });
   try {
     const phone = await guest.newPage();
@@ -86,6 +96,7 @@ test("two saved snapshots play with their own pixels and audio on a phone; revok
       expect(index ? decoded.red : decoded.green).toBeLessThan(50);
       expect(decoded.rms).toBeGreaterThan(.005);
       expect((await guest.request.get(path + "/exports/" + first.id + "/file")).status()).toBe(401);
+      expect((await guest.request.get(path + "/exports/" + first.id + "/edits")).status()).toBe(401);
     }
     await expect(await page.request.delete(path + "/exports/" + first.id + "/share")).toBeOK();
     await phone.goto(watchA);
@@ -159,4 +170,69 @@ test("a missing original names the source; retry restores the pinned version onc
   await expect.poll(async () => (await row(version.id)).status, { timeout: 90_000 }).toBe("completed");
   const history = await (await page.request.get(path + "/exports")).json();
   expect(history.items).toHaveLength(1);
+});
+
+test("publication failure after encoding supports retry and plays the original saved caption", async ({ page }) => {
+  test.skip(process.env.E2E_LIVE_IMAGEKIT === "1", "Uses only the local test store.");
+  test.setTimeout(180_000);
+  const { id, path, start, row, edit } = await setup(page, "Publish retry");
+  await expect(await edit(0, [{ type: "add", clip: { ...textClip("caption", "First cut", 0, 30, 1280),
+    track: "caption", color: "#ff0011", x: 40, y: 80 } }])).toBeOK();
+
+  // Only this new project's publish destination is obstructed. Its render workspace stays writable.
+  const root = join(".renders/test/projects", id), blocked = join(root, "versions");
+  await mkdir(root, { recursive: true });
+  await writeFile(blocked, "Synthetic publication failure", { flag: "wx" });
+  const sql = postgres(testDatabase, { max: 1 });
+  let version: { id: string };
+  try {
+    version = await start(1);
+    await expect.poll(async () => (await row(version.id)).status, { timeout: 60_000 }).toBe("failed");
+    expect(await row(version.id)).toMatchObject({ status: "failed", progress: 99, attempt: 1, downloadUrl: null, watchPath: null,
+      error: "The MP4 was rendered. Publishing it failed. Retry the export." });
+    expect((await page.request.get(path + "/exports/" + version.id + "/file")).status()).toBe(404);
+    expect((await page.request.post(path + "/exports/" + version.id + "/share", { data: {} })).status()).toBe(409);
+    await expect(await edit(1, [{ type: "text", id: "caption", text: "Second cut" },
+      { type: "textStyle", id: "caption", fontSize: 76, color: "#00ff11" }])).toBeOK();
+
+    // Mature only this failed attempt for cleanup. There is no MP4 to delete at the obstructed path.
+    await sql`UPDATE export_attempt SET ended_at=now() - interval '6 minutes' WHERE export_id=${version.id} AND number=1`;
+    await expect.poll(async () => {
+      const [attempt] = await sql`SELECT claim IS NULL AS released FROM export_attempt WHERE export_id=${version.id} AND number=1`;
+      return attempt.released;
+    }, { timeout: 90_000, intervals: [1000, 2500] }).toBe(true);
+  } finally {
+    await sql.end();
+    await unlink(blocked);
+  }
+  const retried = await page.request.post(path + "/exports/" + version.id + "/retry", { data: { attempt: 1 } });
+  expect(await retried.json()).toMatchObject({ id: version.id, revision: 1, attempt: 2 });
+  await expect.poll(async () => (await row(version.id)).status, { timeout: 60_000 }).toBe("completed");
+  const saved = await row(version.id);
+  expect(saved).toMatchObject({ id: version.id, revision: 1, progress: 100 });
+  const colors = await page.evaluate(async (download: string) => {
+    const response = await fetch(download);
+    if (!response.ok) throw new Error("The saved version could not be downloaded.");
+    const url = URL.createObjectURL(await response.blob());
+    const video = document.createElement("video");
+    try {
+      video.muted = true;
+      video.src = url;
+      await video.play();
+      await new Promise<void>(resolve => video.requestVideoFrameCallback(() => resolve()));
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth; canvas.height = 250;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(video, 0, 0);
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let red = 0, green = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i] > 160 && pixels[i + 1] < 90) red++;
+        if (pixels[i + 1] > 160 && pixels[i] < 90) green++;
+      }
+      return { red, green };
+    } finally { video.pause(); URL.revokeObjectURL(url); }
+  }, saved.downloadUrl);
+  expect(colors.red).toBeGreaterThan(300);
+  expect(colors.green).toBeLessThan(50);
 });

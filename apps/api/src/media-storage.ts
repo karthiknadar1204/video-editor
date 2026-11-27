@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { mkdir, mkdtemp, open, link, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -138,17 +138,29 @@ export async function serveAsset(row: Upload, kind: string, range: string | unde
 
 export async function serveLocalFile(path: string, headers: Headers, range: string | undefined) {
   const size = (await stat(path)).size;
-  const file = Bun.file(path);
   headers.set("Accept-Ranges", "bytes");
-  if (!range) { headers.set("Content-Length", String(size)); return new Response(file, { headers }); }
-  const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-  const start = match && !match[1] ? Math.max(0, size - Number(match[2])) : Number(match?.[1]);
-  const end = match?.[1] && match[2] ? Math.min(size - 1, Number(match[2])) : size - 1;
-  if (!match || (!match[1] && !match[2]) || !Number.isSafeInteger(start) || start > end || start >= size) {
-    headers.set("Content-Range", "bytes */" + size);
-    return new Response(null, { status: 416, headers });
+  let start = 0, end = size - 1;
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    start = match && !match[1] ? Math.max(0, size - Number(match[2])) : Number(match?.[1]);
+    end = match?.[1] && match[2] ? Math.min(size - 1, Number(match[2])) : size - 1;
+    if (!match || (!match[1] && !match[2]) || !Number.isSafeInteger(start) || start > end || start >= size) {
+      headers.set("Content-Range", "bytes */" + size);
+      return new Response(null, { status: 416, headers });
+    }
+    headers.set("Content-Range", "bytes " + start + "-" + end + "/" + size);
   }
   headers.set("Content-Length", String(end - start + 1));
-  headers.set("Content-Range", "bytes " + start + "-" + end + "/" + size);
-  return new Response(file.slice(start, end + 1), { status: 206, headers });
+  // Supply a byte stream so Bun does not serialize the same range again via its sliced-file response path.
+  if (!size) return new Response(null, { headers });
+  let chunks: AsyncIterator<Uint8Array> | undefined;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      chunks ??= createReadStream(path, { start, end })[Symbol.asyncIterator]();
+      const chunk = await chunks.next();
+      if (chunk.done) controller.close(); else controller.enqueue(chunk.value);
+    },
+    async cancel() { await chunks?.return?.(); },
+  }, { highWaterMark: 0 });
+  return new Response(body, { status: range ? 206 : 200, headers });
 }

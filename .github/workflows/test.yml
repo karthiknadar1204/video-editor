@@ -20,6 +20,7 @@ jobs:
       - run: bun run typecheck
       - run: bun run test:timeline
       - run: bun test apps/runner/test
+      - run: bun test apps/api/test/local-range.test.ts
       - run: bun run test:migrations
       - name: Ensure FFmpeg and ffprobe are available
         run: |

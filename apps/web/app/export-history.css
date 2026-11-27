@@ -13,3 +13,6 @@
 .export-history p { margin:6px 0; color:#ded2c4; }
 .export-history>p,.export-history>button { margin:16px 20px; }
 .export-history progress { width:100%; accent-color:#dca76e; }
+.export-edits summary { cursor:pointer; width:fit-content; color:#d9c4ac; font-size:13px; }
+.export-edits ol { padding:0; margin:8px 0; }
+.export-edits ol li { display:block; border:0; padding:3px 0; font-size:12px; }

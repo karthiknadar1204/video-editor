@@ -1,6 +1,6 @@
-import { mkdir, rename, rm } from "node:fs/promises";
+import { mkdir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import ImageKit from "@imagekit/nodejs";
+import ImageKit, { NotFoundError } from "@imagekit/nodejs";
 import { projectExportDir } from "../../worker/paths";
 import type { exportVersion } from "./db/export-schema";
 import { imageKitCredentials, serveLocalFile } from "./media-storage";
@@ -30,15 +30,24 @@ export async function publishOutput(v: Version, attempt: number, file: string, s
 }
 
 export async function forgetOutput(v: Version, attempt: number) {
-  if (v.storage === "local") { await rm(join(localFolder(v), fileName(attempt)), { force: true }); return; }
+  if (v.storage === "local") {
+    try { await unlink(join(localFolder(v), fileName(attempt))); }
+    catch (error) {
+      // A missing parent or a non-directory in its place means this output was never published.
+      if (!(error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"))) throw error;
+    }
+    return;
+  }
   const client = new ImageKit({ privateKey: imageKitCredentials().privateKey, timeout: 30_000, maxRetries: 1 });
   const path = folder(v);
-  for (let skip = 0; ; skip += 100) {
-    const files = await client.assets.list({ type: "file", path: path + "/", skip, limit: 100 });
-    const file = files.find(item => item.filePath === path + "/" + fileName(attempt));
-    if (file?.fileId) { await client.files.delete(file.fileId); return; }
-    if (files.length < 100) return;
-  }
+  try {
+    for (let skip = 0; ; skip += 100) {
+      const files = await client.assets.list({ type: "file", path: path + "/", skip, limit: 100 });
+      const file = files.find(item => item.filePath === path + "/" + fileName(attempt));
+      if (file?.fileId) { await client.files.delete(file.fileId); return; }
+      if (files.length < 100) return;
+    }
+  } catch (e) { if (!(e instanceof NotFoundError)) throw e; }
 }
 
 export async function streamOutput(v: Version, attempt: number, request: Request, download: boolean) {

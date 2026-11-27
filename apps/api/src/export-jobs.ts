@@ -191,6 +191,7 @@ async function runNext() {
       .then(rows => { if (!rows.length) controller.abort(); }).catch(() => controller.abort());
   }, 8_000);
   const directory = workDir(v.projectId, claim);
+  let publishing = false;
   try {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const bundle = await pinnedBundle(v.release);
@@ -207,11 +208,12 @@ async function runNext() {
     }, directory, { bundle, signal });
     const uploading = await db.update(exportAttempt).set({ status: "uploading", progress: 99 }).where(mine).returning({ n: exportAttempt.number });
     if (!uploading.length) return true;
+    publishing = true;
     const remoteId = await publishOutput(v, number, join(directory, "output.mp4"), signal);
     await db.update(exportAttempt).set({ status: "completed", remoteId, progress: 100, endedAt: new Date(), leaseUntil: null }).where(mine);
   } catch (error) {
     const message = error instanceof MissingSource ? error.message : signal.aborted ? "The export was interrupted. Retry the saved version." :
-      "The worker could not render or publish this version. Retry the export.";
+      publishing ? "The MP4 was rendered. Publishing it failed. Retry the export." : "The worker could not render this version. Retry the export.";
     await db.update(exportAttempt).set({ status: "failed", error: message, endedAt: new Date(), leaseUntil: null }).where(mine);
   } finally {
     clearInterval(beat);
@@ -221,23 +223,36 @@ async function runNext() {
   return true;
 }
 
+let abandonedOffset = 0, expiredOffset = 0;
 async function collectExpired() {
   const abandoned = await db.select({ v: exportVersion, n: exportAttempt.number, claim: exportAttempt.claim }).from(exportAttempt).innerJoin(exportVersion, eq(exportVersion.id, exportAttempt.exportId))
-    .where(and(inArray(exportAttempt.status, ["failed", "cancelled"]), isNotNull(exportAttempt.claim), lt(exportAttempt.endedAt, new Date(Date.now() - 5 * 60_000)))).limit(12);
+    .where(and(inArray(exportAttempt.status, ["failed", "cancelled"]), isNotNull(exportAttempt.claim), lt(exportAttempt.endedAt, new Date(Date.now() - 5 * 60_000))))
+    .orderBy(exportAttempt.exportId, exportAttempt.number).offset(abandonedOffset).limit(12);
+  let missed = 0;
   for (const { v, n, claim } of abandoned) {
-    if (claim) await rm(workDir(v.projectId, claim), { recursive: true, force: true });
-    await forgetOutput(v, n);
-    await db.update(exportAttempt).set({ claim: null }).where(identity(v.id, n));
+    try {
+      if (claim) await rm(workDir(v.projectId, claim), { recursive: true, force: true });
+      await forgetOutput(v, n);
+      await db.update(exportAttempt).set({ claim: null }).where(identity(v.id, n));
+    } catch { missed++; }
   }
-  const expired = await db.select().from(exportVersion).where(lt(exportVersion.expiresAt, new Date())).limit(8);
+  // Successful rows left the queue. Pass temporarily unavailable rows, then revisit them after a full sweep.
+  abandonedOffset = abandoned.length === 12 ? abandonedOffset + missed : 0;
+  const expired = await db.select().from(exportVersion).where(lt(exportVersion.expiresAt, new Date())).orderBy(exportVersion.id).offset(expiredOffset).limit(8);
+  let deferred = 0;
   for (const v of expired) {
-    const attempts = await db.select({ n: exportAttempt.number, claim: exportAttempt.claim }).from(exportAttempt).where(eq(exportAttempt.exportId, v.id));
-    for (const a of attempts) {
-      if (a.claim) await rm(workDir(v.projectId, a.claim), { recursive: true, force: true });
-      await forgetOutput(v, a.n);
-    }
-    await db.delete(exportVersion).where(and(eq(exportVersion.id, v.id), lt(exportVersion.expiresAt, new Date())));
+    try {
+      const attempts = await db.select({ n: exportAttempt.number, claim: exportAttempt.claim }).from(exportAttempt).where(eq(exportAttempt.exportId, v.id));
+      for (const a of attempts) {
+        if (!a.claim) continue;
+        await rm(workDir(v.projectId, a.claim), { recursive: true, force: true });
+        await forgetOutput(v, a.n);
+      }
+      await db.delete(exportVersion).where(and(eq(exportVersion.id, v.id), lt(exportVersion.expiresAt, new Date())));
+    } catch { deferred++; }
   }
+  expiredOffset = expired.length === 8 ? expiredOffset + deferred : 0;
+  if (missed || deferred) console.error("Some export files were unavailable for cleanup. Retention will retry.");
 }
 let busy = false, pending = false, nextCleanup = 0;
 let timer: ReturnType<typeof setInterval> | undefined;
