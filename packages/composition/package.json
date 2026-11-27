@@ -1,0 +1,13 @@
+{
+  "name": "@editor/composition",
+  "private": true,
+  "type": "module",
+  "exports": "./src/Film.tsx",
+  "dependencies": {
+    "@editor/timeline": "workspace:*",
+    "@remotion/fonts": "4.0.547",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.547"
+  }
+}

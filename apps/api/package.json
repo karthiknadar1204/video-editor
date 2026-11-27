@@ -1,0 +1,12 @@
+{
+  "name": "@editor/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "NODE_ENV=production bun src/index.ts"
+  },
+  "dependencies": {
+    "hono": "4.13.23"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@editor/web",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -H 127.0.0.1",
+    "build": "next build",
+    "start": "next start -H 127.0.0.1"
+  },
+  "dependencies": {
+    "@editor/composition": "workspace:*",
+    "@editor/timeline": "workspace:*",
+    "@remotion/player": "4.0.547",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  }
+}
