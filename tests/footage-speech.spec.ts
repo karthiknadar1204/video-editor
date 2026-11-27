@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import postgres from "postgres";
+import { mediaClip, projectSnapshot } from "../packages/timeline/src/model";
 import { signup } from "./accounts";
 import { testDatabase } from "./local";
 
@@ -31,6 +32,36 @@ test("a private speech recording becomes searchable, and recovery keeps the orig
   const original = await (await page.request.get(path + "?view=original")).json();
   expect(original).toMatchObject({ status: "ready", transcriptStatus: "transcribed", hasAudio: true, revision: 0, hasOriginal: true, timestampsMs: [] });
   expect(original.words.length).toBeGreaterThan(18);
+  const before = projectSnapshot.parse(saved), asset = before.timeline.assets.find(a => a.id === assetId)!;
+  const spoken = { ...mediaClip("speech-fixture", assetId, 0, asset.duration), track: "speech" as const };
+  await expect(await page.request.post(root + "/edits", { data: { kind: "edit", requestId: randomUUID(),
+    expectedRevision: before.revision, operations: [{ type: "add", clip: spoken }] } })).toBeOK();
+  const read = async () => projectSnapshot.parse(await (await page.request.get(root)).json());
+  const inserted = await read();
+  await page.goto("/projects/" + id);
+  await page.getByRole("button", { name: /Open rough-cut review/ }).click();
+  const review = page.getByRole("dialog", { name: "Rough-cut review" });
+  await review.getByLabel("Apply to").selectOption("range");
+  await review.getByLabel("Start frame").fill("30");
+  await review.getByLabel("End frame (exclusive)").fill("240");
+  await review.getByRole("combobox", { name: "Captions", exact: true }).selectOption("highlight");
+  await review.getByText("Caption appearance").click();
+  await review.getByRole("combobox", { name: "Font", exact: true }).selectOption("serif");
+  await review.getByLabel("Placement").selectOption("top");
+  await review.getByRole("button", { name: "Preview rough cut" }).click();
+  await expect(review.getByRole("button", { name: "Apply rough cut" })).toBeVisible();
+  expect((await read()).revision).toBe(inserted.revision);
+  await review.getByRole("button", { name: "Apply rough cut" }).click();
+  await expect.poll(async () => (await read()).revision).toBe(inserted.revision + 1);
+  const captions = (await read()).timeline.clips.filter(c => c.kind === "text" && c.track === "caption");
+  expect(captions.length).toBeGreaterThan(0);
+  for (const cue of captions) {
+    expect(cue).toMatchObject({ caption: { style: "highlight", font: "serif" } });
+    expect(cue.start).toBeGreaterThanOrEqual(30);
+    expect(cue.start + cue.duration).toBeLessThanOrEqual(240);
+  }
+  await review.getByRole("button", { name: "Undo this edit" }).click();
+  await expect.poll(async () => (await read()).timeline).toEqual(inserted.timeline);
   await expect(await page.request.put(path, { data: { revision: 0, index: 0, correction: { text: "Reviewed" } } })).toBeOK();
 
   // Simulate the process exiting after the transcript was written but before it acknowledged the audio-only sheet.

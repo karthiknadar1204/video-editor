@@ -71,7 +71,7 @@ async function observeExport(page: Page, base: string, revision: number, start: 
   };
 }
 
-async function prepare(page: Page, info: TestInfo, measureTranscript = false) {
+async function prepare(page: Page, info: TestInfo) {
   const path = info.outputPath("interview-takes.mp4");
   // Two real takes of each Apollo 8 excerpt, with a deliberate 1.4s silence between the passages.
   const fixture = "apps/web/public/media/earthrise.mp4";
@@ -139,7 +139,8 @@ async function prepare(page: Page, info: TestInfo, measureTranscript = false) {
   const source = original.timeline.assets.find((a) => a.name === "interview-takes.mp4");
   if (!source) throw new Error("Fixture footage is missing.");
   const endpoint = base + "/assets/" + source.id + "/analysis";
-  const nativeTranscript = measureTranscript ? observeNativeTranscript(page, endpoint, uploadAt).catch(() => null) : null;
+  const verifyNative = measure || process.env.E2E_RELEASE_TARGET === "staging" || process.env.CUTROOM_TEST_WHISPER === "1";
+  const nativeTranscript = verifyNative ? observeNativeTranscript(page, endpoint, uploadAt).catch(() => null) : null;
   const words: { text: string; startMs: number; endMs: number }[] = [];
   function phrase(text: string, bounds: number[], offset: number) {
     for (const [i, word] of text.split(" ").entries())
@@ -170,7 +171,9 @@ async function prepare(page: Page, info: TestInfo, measureTranscript = false) {
     }),
   ).toBeOK();
   await page.goto(editor);
-  return { read, base, original: await read(), editor, uploadToPlayableMs, nativeTranscript, fixtureBytes: statSync(path).size };
+  const uploadToNativeTranscriptMs = await nativeTranscript;
+  if (verifyNative) expect(uploadToNativeTranscriptMs, "The uploaded interview must produce a native speech transcript.").not.toBeNull();
+  return { read, base, original: await read(), editor, uploadToPlayableMs, uploadToNativeTranscriptMs, fixtureBytes: statSync(path).size };
 }
 
 async function accepted(page: Page, base: string) {
@@ -192,7 +195,7 @@ test("rough-cut review plays both takes, restores a passage and exports the sele
   browser,
 }, info) => {
   test.setTimeout(300_000);
-  const { base, read, original, editor, uploadToPlayableMs, nativeTranscript, fixtureBytes } = await prepare(page, info, measure);
+  const { base, read, original, editor, uploadToPlayableMs, uploadToNativeTranscriptMs, fixtureBytes } = await prepare(page, info);
   await page.getByRole("button", { name: "interview-takes.mp4 at frame 0" }).click();
   const chat = page.getByRole("region", { name: "Edit assistant" });
   await chat.getByRole("textbox", { name: "Ask Codex" }).fill(prompt);
@@ -298,7 +301,7 @@ test("rough-cut review plays both takes, restores a passage and exports the sele
   }
   const renderToCompleteMs = Math.round(performance.now() - renderAt);
   const timings = { fixtureBytes, uploadToPlayableMs, submitToFirstCandidateMs, submitToSavedEditMs, renderToCompleteMs,
-    ...(measure ? { uploadToNativeTranscriptMs: await nativeTranscript, frameInspectionMs, ...await exportMetrics } : {}) };
+    ...(measure ? { uploadToNativeTranscriptMs, frameInspectionMs, ...await exportMetrics } : {}) };
   await info.attach("release-timings.json", {
     body: Buffer.from(JSON.stringify(timings)),
     contentType: "application/json",
@@ -330,8 +333,9 @@ test("rough-cut review plays both takes, restores a passage and exports the sele
       .toBeGreaterThan(0.2);
     await info.attach("watch-phone.png", { body: await guest.screenshot(), contentType: "image/png" });
     await exported.getByRole("button", { name: "Revoke watch link", exact: true }).click();
+    await expect(exported.getByRole("button", { name: "Create watch link", exact: true })).toBeVisible({ timeout: 15_000 });
     await guest.reload();
-    await expect(guest.getByText("This watch link is unavailable.")).toBeVisible();
+    await expect(guest.getByText("This watch link is unavailable.")).toBeVisible({ timeout: 15_000 });
   } finally {
     await phone.close();
   }

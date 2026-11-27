@@ -19,7 +19,7 @@ const summarySchema = z.object({
 const detailSchema = summarySchema.extend({ before: timelineSchema, after: timelineSchema });
 type Summary = z.infer<typeof summarySchema>;
 type Detail = z.infer<typeof detailSchema>;
-const listSchema = z.object({ reviews: z.array(summarySchema) });
+const listSchema = z.object({ reviews: z.array(summarySchema), nextOffset: z.int().nullable() });
 const seconds = (frames: number, fps: number) => Number((frames / fps).toFixed(2)) + " s";
 
 function label(review: Summary, fps: number) {
@@ -115,6 +115,7 @@ function ReviewDialog({
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [reviews, setReviews] = useState<Summary[]>([]);
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [review, show] = useState<Detail>();
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
@@ -122,8 +123,7 @@ function ReviewDialog({
   const [comparison, play] = useState<{ side: "before" | "after"; attempt: number; at?: number } | null>(null);
   const [composing, compose] = useState(false);
   const [captionStyle, setCaptionStyle] = useState("readable");
-  const optionsTarget =
-    selected?.kind === "media" ? { clipId: selected.id } : { from: 0, to: project.timeline.durationInFrames };
+  const [scope, setScope] = useState(selected?.kind === "media" ? "clip" : "all");
   const retryIds = useRef(new Map<string, string>());
   const getId = (key: string) => {
     let id = retryIds.current.get(key);
@@ -134,18 +134,27 @@ function ReviewDialog({
     return id;
   };
   async function load(id?: string) {
-    const { reviews } = listSchema.parse(await api(base));
+    const { reviews, nextOffset } = listSchema.parse(await api(base));
+    setNextOffset(nextOffset);
     const target = id ?? reviews[0]?.id;
+    let visible = reviews;
     if (target) {
       const detail = detailSchema.parse(await api(base + "/" + target));
+      if (!reviews.some(r => r.id === detail.id)) visible = [...reviews, detail];
       show(detail);
       choose((previous) =>
         detail.receipt.cuts.some((c) => c.id === previous) ? previous : (detail.receipt.cuts[0]?.id ?? ""),
       );
     } else show(undefined);
-    setReviews(reviews);
+    setReviews(visible);
     play(null);
     compose(!target);
+  }
+  async function earlierReviews() {
+    if (nextOffset === null) return;
+    const page = listSchema.parse(await api(base + "?offset=" + nextOffset));
+    setReviews(old => [...old, ...page.reviews.filter(r => !old.some(existing => existing.id === r.id))]);
+    setNextOffset(page.nextOffset);
   }
   useEffect(() => {
     dialog.current?.showModal();
@@ -167,8 +176,11 @@ function ReviewDialog({
     }
   }
   async function prepare(form: FormData) {
+    const range = scope === "range" ? { from: Number(form.get("from")), to: Number(form.get("to")) }
+      : { from: 0, to: project.timeline.durationInFrames };
+    if (scope === "range" && range.from >= range.to) throw new Error("The end frame must come after the start frame.");
     const options = {
-      target: optionsTarget,
+      target: scope === "clip" && selected?.kind === "media" ? { clipId: selected.id } : range,
       pauseThresholdMs: Number(form.get("pause")),
       breathingRoomMs: Number(form.get("room")),
       repetitions: form.get("repetitions"),
@@ -256,6 +268,7 @@ function ReviewDialog({
               New rough cut
             </button>
           )}
+          {nextOffset !== null && <button disabled={busy} onClick={() => void run(earlierReviews)}>Load earlier reviews</button>}
         </div>
         {composing && (
           <form
@@ -266,10 +279,17 @@ function ReviewDialog({
               void run(() => prepare(form));
             }}
           >
-            <p>
-              {selected?.kind === "media" ? "Selected clip" : "Entire sequence"} ·{" "}
-              {seconds(selected?.kind === "media" ? selected.duration : project.timeline.durationInFrames, fps)}
-            </p>
+            <label>Apply to
+              <select value={scope} onChange={event => setScope(event.target.value)}>
+                {selected?.kind === "media" && <option value="clip">Selected clip</option>}
+                <option value="all">Entire sequence</option>
+                <option value="range">Timeline range</option>
+              </select>
+            </label>
+            {scope === "range" && <>
+              <label>Start frame<input name="from" type="number" min={0} max={project.timeline.durationInFrames - 1} defaultValue={0} required /></label>
+              <label>End frame (exclusive)<input name="to" type="number" min={1} max={project.timeline.durationInFrames} defaultValue={project.timeline.durationInFrames} required /></label>
+            </>}
             <label>
               Minimum pause (ms)
               <input type="number" name="pause" min={100} max={60000} required defaultValue={1000} />

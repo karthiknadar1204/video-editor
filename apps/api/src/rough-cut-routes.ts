@@ -30,7 +30,11 @@ roughCutRoutes.onError((error, c) => {
   console.error("Rough cut request failed", error.name);
   return c.json({ error: "Could not open this review." }, 503);
 });
-roughCutRoutes.get("/", async c => c.json({ reviews: await listRoughCuts(owner(c.req.param("id"), c.get("ownerId"))) }));
+roughCutRoutes.get("/", async c => {
+  const offset = z.coerce.number().int().min(0).max(2_147_483_647).safeParse(c.req.query("offset") ?? 0);
+  if (!offset.success) return c.json({ error: "Choose a valid review page." }, 400);
+  return c.json(await listRoughCuts(owner(c.req.param("id"), c.get("ownerId")), offset.data));
+});
 roughCutRoutes.get("/:reviewId", async c => c.json(await getRoughCut(owner(c.req.param("id"), c.get("ownerId")), c.req.param("reviewId"))));
 roughCutRoutes.post("/", async c => {
   const body = preview.safeParse(await c.req.json().catch(() => null));

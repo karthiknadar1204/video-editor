@@ -33,6 +33,8 @@ The first command needs FFmpeg and the worker packages. It generates silent red/
 
 Each request works from a staged local original. FFmpeg produces 16 kHz mono PCM on the source clock. Missing audio and near-digital silence at or below −80 dBFS produce zero words. For sustained leading silence the worker gives the recognizer a source offset with 100 ms of pre-roll. Whisper uses English, four CPU threads, one-word output segments, and word-boundary splitting. Times are measured in milliseconds. If one native segment contains multiple words, its subdivisions are marked estimated. A video can still produce its source contact sheet if transcription fails. The sheet shows up to six separately decoded source frames and their source timestamps.
 
+Word timing also accounts for measured silence. If a word begins or ends inside a quiet interval, the worker moves that edge to the audible portion. If a quiet interval falls entirely inside a word, the worker preserves the word and marks its timing estimated for review. When the recognizer assigns words beyond the media end, the worker keeps their text and fits the uncertain tail between the last reliable boundary and the source end. The analysis version includes this timing rule so older results can be regenerated.
+
 ## Measured speech timing
 
 On an Apple M4 with FFmpeg 8.0.1 and the pinned CPU build, three runs on the 11-second JFK WAV took 793, 738 and 712 ms, including decoding and recognizer startup. The median runtime was 0.067 seconds per second of audio. The build used CMake 3.31.6; the workstation executable's SHA-256 was `ea19bbd4ad78ceea28856c20f579391fbcb9b715884753bb4ae858abc19f48fb`. Executable hashes depend on the compiler, platform and build path.

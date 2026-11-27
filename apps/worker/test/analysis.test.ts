@@ -4,11 +4,54 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { createEmptyTimeline, editTimeline, mediaClip, prepareRoughCut, rushes } from "@editor/timeline";
 import sharp from "sharp";
-import { makeSourceSheet, transcribeSource } from "../src/analysis";
+import { makeSourceSheet, nativeWords, transcribeSource } from "../src/analysis";
 import { fixturePath } from "../whisper";
 
 const exec = promisify(execFile);
+
+test("recognized words past the media end survive with bounded estimated times", () => {
+  const row = (text: string, from: number, to: number) => ({ text, offsets: { from, to } });
+  const words = nativeWords([
+    row("before", 7000, 7760), row("a", 7760, 9750), row("color", 9750, 10060), row("film", 10060, 10680),
+  ], 8800);
+  expect(words.map(w => w.text)).toEqual(["before", "a", "color", "film"]);
+  expect(words[0]).toEqual({ text: "before", timing: "word", startMs: 7000, endMs: 7760 });
+  expect(words.slice(1).every(w => w.timing === "estimated")).toBe(true);
+  expect(words.every((w, i) => w.startMs >= (words[i-1]?.endMs ?? 0) && w.endMs > w.startMs && w.endMs <= 8800)).toBe(true);
+});
+
+test("ambiguous silence preserves a word crossing two audible regions; an internal zero-length estimate leaves its next anchor intact", () => {
+  const words = nativeWords([
+    { text: "both", offsets: { from: 0, to: 500 } },
+    { text: "then", offsets: { from: 500, to: 500 } },
+    { text: "next", offsets: { from: 600, to: 800 } },
+  ], 800, [{ startMs: 90, endMs: 370 }]);
+  expect(words).toEqual([
+    { text: "both", timing: "estimated", startMs: 0, endMs: 500 },
+    { text: "then", timing: "estimated", startMs: 500, endMs: 600 },
+    { text: "next", timing: "word", startMs: 600, endMs: 800 },
+  ]);
+});
+
+test.skipIf(process.env.CUTROOM_TEST_WHISPER !== "1")("a measured pause between two speech excerpts survives native recognition and rough-cut planning", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "cutroom-spoken-pause-"));
+  try {
+    const path = join(folder, "pause.wav");
+    await exec("ffmpeg", ["-nostdin", "-v", "error", "-i", fixturePath, "-filter_complex",
+      "[0:a]atrim=start=0.3:end=4.8,asetpts=PTS-STARTPTS[a];anullsrc=r=16000:cl=mono,atrim=duration=2.4[s];" +
+      "[0:a]atrim=start=4.8:end=10.5,asetpts=PTS-STARTPTS[b];[a][s][b]concat=n=3:v=0:a=1[out]", "-map", "[out]", "-ar", "16000", path]);
+    const transcript = await transcribeSource({ path, durationMs: 12_600, hasAudio: true });
+    const timeline = editTimeline(createEmptyTimeline("film", "Interview", "landscape"), [
+      { type: "add", clip: mediaClip("interview", rushes.id, 0, 378) },
+    ]).timeline;
+    const { receipt } = prepareRoughCut(timeline, { [rushes.id]: transcript.words },
+      { target: { clipId: "interview" }, pauseThresholdMs: 2000, breathingRoomMs: 120 }, "review");
+    expect(receipt.cuts).toContainEqual(expect.objectContaining({ kind: "pause",
+      from: Math.ceil((4500 + 120) * timeline.fps / 1000), to: Math.floor((6900 - 120) * timeline.fps / 1000) }));
+  } finally { await rm(folder, { recursive: true, force: true }); }
+}, 60_000);
 
 test("a silent source produces no words and a labelled sheet of decoded source frames", async () => {
   const folder = await mkdtemp(join(tmpdir(), "cutroom-silent-"));

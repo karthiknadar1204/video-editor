@@ -89,11 +89,8 @@ export function registerWorkflows(server: McpServer, access: ProjectAccess, call
           return candidate(review, args.frame, review.baseRevision !== args.revision);
         }
         if (args.action === "inspect" && !args.reviewId) {
-          const all = await listRoughCuts(access),
-            offset = args.offset ?? 0;
-          const reviews = all
-            .slice(offset, offset + 30)
-            .map((r) => ({
+          const page = await listRoughCuts(access, args.offset ?? 0);
+          const reviews = page.reviews.map((r) => ({
               reviewId: r.id,
               baseRevision: r.baseRevision,
               committedRevision: r.committedRevision,
@@ -101,7 +98,7 @@ export function registerWorkflows(server: McpServer, access: ProjectAccess, call
               removedFrames: r.receipt.removedFrames,
             }));
           return {
-            result: packet({ reviews, nextOffset: offset + 30 < all.length ? offset + 30 : null }),
+            result: packet({ reviews, nextOffset: page.nextOffset }),
             detail: "Read the rough-cut review list",
           };
         }

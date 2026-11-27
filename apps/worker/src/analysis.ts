@@ -8,7 +8,7 @@ import sharp, { type OverlayOptions } from "sharp";
 import { z } from "zod";
 import { cliPath, modelPath, whisper } from "../whisper";
 
-export const analysisVersion = "whisper.cpp-" + whisper.version + "/base.en-" + whisper.modelHash.slice(0, 16) + "/sow-1/sheet-1";
+export const analysisVersion = "whisper.cpp-" + whisper.version + "/base.en-" + whisper.modelHash.slice(0, 16) + "/sow-2/sheet-1";
 const exec = promisify(execFile);
 const localInput = ["-protocol_whitelist", "file", "-format_whitelist", "mov,matroska,webm,mp3,wav,ogg"];
 const mediaOptions = { env: { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR }, killSignal: "SIGKILL" as const };
@@ -16,6 +16,56 @@ const duration = z.int().positive().max(3_600_000);
 const nativeOutput = z.object({ transcription: z.array(z.object({
   text: z.string(), offsets: z.object({ from: z.int().nonnegative(), to: z.int().nonnegative() }),
 })).max(30_000) });
+
+type Silence = { startMs: number; endMs: number };
+
+function measuredSilences(stderr: string): Silence[] {
+  return Array.from(stderr.matchAll(/silence_start: ([\d.eE+-]+)[\s\S]*?silence_end: ([\d.eE+-]+)/g), m => ({
+    startMs: Math.ceil(Number(m[1]) * 1000), endMs: Math.floor(Number(m[2]) * 1000),
+  }));
+}
+
+export function nativeWords(transcription: z.infer<typeof nativeOutput>["transcription"], durationMs: number, silences: Silence[] = []) {
+  const recognized = transcription.flatMap(({ text, offsets }) => {
+    const line = text.trim();
+    if (!line || /^\[(blank_audio|silence|music)\]$/i.test(line)) return [];
+    const tokens = line.split(/\s+/);
+    const boundary = (i: number) => offsets.from + Math.floor((offsets.to - offsets.from) * i / tokens.length);
+    return tokens.map((token, i): TranscriptWord => ({ text: token, timing: tokens.length === 1 ? "word" : "estimated",
+      startMs: boundary(i), endMs: boundary(i + 1) }));
+  });
+  const words: TranscriptWord[] = [];
+  let previousEnd = 0;
+  function estimateUntil(index: number, nextStart: number) {
+    const first = words.length;
+    const boundary = (i: number) => previousEnd + Math.floor((nextStart - previousEnd) * (i - first) / (index - first));
+    for (let i = first; i < index; i++) {
+      const startMs = Math.min(durationMs - 1, boundary(i));
+      words.push({ ...recognized[i], timing: "estimated", startMs, endMs: Math.max(startMs + 1, boundary(i + 1)) });
+    }
+  }
+  for (const [i, word] of recognized.entries()) {
+    // Keep native anchors when every intervening word still fits in the available source milliseconds.
+    if (word.endMs <= word.startMs || word.startMs - previousEnd < i - words.length ||
+        durationMs - word.endMs < recognized.length - i - 1) continue;
+    estimateUntil(i, word.startMs);
+    words.push(word);
+    previousEnd = word.endMs;
+  }
+  estimateUntil(recognized.length, durationMs);
+
+  let firstSilence = 0;
+  for (const word of words) {
+    while (firstSilence < silences.length && silences[firstSilence].endMs <= word.startMs) firstSilence++;
+    for (let i = firstSilence; i < silences.length && silences[i].startMs < word.endMs; i++) {
+      const quiet = silences[i];
+      if (quiet.startMs <= word.startMs && quiet.endMs < word.endMs) word.startMs = quiet.endMs;
+      else if (quiet.startMs > word.startMs && quiet.endMs >= word.endMs) word.endMs = quiet.startMs;
+      else word.timing = "estimated"; // No unique spoken side, or the word lies entirely in silence.
+    }
+  }
+  return words.map(word => transcriptWordSchema.parse(word));
+}
 
 type Transcript = { status: "ready" | "no-speech"; words: TranscriptWord[] };
 export async function transcribeSource(input: { path: string; durationMs: number; hasAudio: boolean }): Promise<Transcript> {
@@ -27,29 +77,17 @@ export async function transcribeSource(input: { path: string; durationMs: number
     const { stderr } = await exec("ffmpeg", ["-nostdin", "-hide_banner", "-nostats", "-threads", "2", ...localInput,
       "-i", input.path, "-map", "0:a:0", "-vn", "-af", "aresample=16000:async=1:first_pts=0,silencedetect=n=-65dB:d=0.25,volumedetect",
       "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-t", String(durationMs / 1000), wav],
-      { ...mediaOptions, timeout: 180_000, maxBuffer: 512 * 1024 });
+      { ...mediaOptions, timeout: 180_000, maxBuffer: 4 * 1024 * 1024 });
     const peak = /max_volume:\s*(-?[\d.]+) dB/.exec(stderr);
     if (peak && Number(peak[1]) <= -80) return { status: "no-speech", words: [] };
-    const initialSilence = /silence_start: 0(?:\.0+)?\s*\n[^\n]*silence_end: ([\d.]+)/.exec(stderr);
-    const offsetMs = initialSilence ? Math.max(0, Math.floor(Number(initialSilence[1]) * 1000) - 100) : 0;
+    const silences = measuredSilences(stderr);
+    const offsetMs = silences[0]?.startMs === 0 ? Math.max(0, silences[0].endMs - 100) : 0;
     const prefix = join(folder, "speech");
     await exec(cliPath, ["-m", modelPath, "-f", wav, "-l", "en", "-t", "4", "-ng", "-np",
       "-ot", String(offsetMs), "-ml", "1", "-sow", "-oj", "-of", prefix], { ...mediaOptions, timeout: 15 * 60_000, maxBuffer: 4 * 1024 * 1024 });
     if ((await stat(prefix + ".json")).size > 8 * 1024 * 1024) throw new Error();
     const { transcription } = nativeOutput.parse(JSON.parse(await readFile(prefix + ".json", "utf8")));
-    const words: TranscriptWord[] = [];
-    for (const { text, offsets } of transcription) {
-      const tokens = text.trim().split(/\s+/).filter(Boolean);
-      if (!tokens.length || /^\[(blank_audio|silence|music)\]$/i.test(text.trim())) continue;
-      const start = Math.min(offsets.from, durationMs);
-      const end = Math.min(offsets.to, durationMs);
-      if (end <= start || end - start < tokens.length) throw new Error();
-      for (const [i, word] of tokens.entries()) {
-        words.push(transcriptWordSchema.parse({ text: word, timing: tokens.length === 1 ? "word" : "estimated",
-          startMs: start + Math.floor((end - start) * i / tokens.length),
-          endMs: start + Math.floor((end - start) * (i + 1) / tokens.length) }));
-      }
-    }
+    const words = nativeWords(transcription, durationMs, silences);
     return { status: words.length ? "ready" : "no-speech", words };
   } catch {
     throw new Error("Could not transcribe this source. Check the pinned Whisper installation or import subtitles.");

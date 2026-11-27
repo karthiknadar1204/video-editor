@@ -85,16 +85,17 @@ function detail(row: Review, log: Ledger) {
   return { ...summary(row, row.receipt, log), before: row.before, after };
 }
 
-export async function listRoughCuts(access: Owner) {
+export async function listRoughCuts(access: Owner, offset: number) {
   const [p] = await db.select({ id: project.id }).from(project).where(projectKey(access));
   if (!p) throw new HistoryError(404, "Project not found.");
   const rows = await db.select({ id: reviews.id, baseRevision: reviews.baseRevision, committedRevision: reviews.committedRevision, options: reviews.options,
     receipt: sql`${reviews.receipt} - 'context'` }).from(reviews).leftJoin(codexRun, eq(codexRun.id, reviews.runId))
     .where(and(eq(reviews.projectId, access.projectId), sql`(${reviews.committedRevision} is not null or ${reviews.runId} is null or
       ${codexRun.status} = 'completed' or (${codexRun.status} = 'running' and ${codexRun.expiresAt} > now()))`))
-    .orderBy(desc(reviews.createdAt)).limit(50);
+    .orderBy(desc(reviews.createdAt), desc(reviews.id)).offset(offset).limit(31);
   const log = await ledger(db, access);
-  return rows.map(row => summary(row, row.receipt, log)).filter(r => r.status !== "abandoned");
+  return { reviews: rows.slice(0, 30).map(row => summary(row, row.receipt, log)).filter(r => r.status !== "abandoned"),
+    nextOffset: rows.length > 30 ? offset + 30 : null };
 }
 export async function getRoughCut(access: Access, id: string) {
   const row = await scopedReview(db, access, id);
