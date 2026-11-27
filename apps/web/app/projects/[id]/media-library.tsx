@@ -1,6 +1,8 @@
 import { assetSchema, type Timeline } from "@editor/timeline";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
+import { SourceInspector } from "./source-inspector";
+import "./source-inspector.css";
 
 type Asset = Timeline["assets"][number];
 const ticketSchema = z.object({ id: z.uuid(), upload: z.object({ method: z.enum(["PUT", "POST"]), url: z.string(), fields: z.record(z.string(), z.string()) }) });
@@ -42,8 +44,9 @@ function transfer(file: File, ticket: Ticket, signal: AbortSignal, progress: (n:
 
 type Job = { file: File; ticket?: Ticket; uploaded?: { fileId?: string } };
 
-export function MediaLibrary({ id, timeline, onAdded, onInsert, close }: {
-  id: string; timeline: Timeline; onAdded: () => Promise<void>; onInsert: (asset: Asset) => void; close: () => void;
+export function MediaLibrary({ id, timeline, revision, onJump, onAdded, onInsert, close }: {
+  id: string; timeline: Timeline; revision: number; onJump: (id: string, frame: number) => void;
+  onAdded: () => Promise<void>; onInsert: (asset: Asset) => void; close: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const job = useRef<Job | null>(null);
@@ -51,6 +54,7 @@ export function MediaLibrary({ id, timeline, onAdded, onInsert, close }: {
   const [note, setNote] = useState("");
   const [state, setState] = useState<"idle" | "transfer" | "processing" | "failed">("idle");
   const [progress, setProgress] = useState(0);
+  const [inspecting, setInspecting] = useState<Asset | null>(null);
   const path = "/api/projects/" + id + "/assets";
   useEffect(() => { dialog.current?.showModal(); return () => controller.current?.abort(); }, []);
   const busy = state === "transfer" || state === "processing";
@@ -98,6 +102,8 @@ export function MediaLibrary({ id, timeline, onAdded, onInsert, close }: {
   }
   return <dialog className="media-dialog" ref={dialog} aria-label="Media library" onCancel={e => { if (busy) e.preventDefault(); else close(); }}>
     <div className="studio-panel-title"><h2>Media library</h2><button disabled={busy} className="studio-plain" onClick={close} aria-label="Close media library">×</button></div>
+    {inspecting ? <SourceInspector key={inspecting.id} projectId={id} asset={inspecting} fps={timeline.fps} revision={revision}
+      onJump={onJump} back={() => setInspecting(null)} /> : <>
     <label className="upload-drop" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); pick(e.dataTransfer.files[0]); }}>
       <span aria-hidden="true">↑</span><strong>Choose footage</strong><small>Drop video or audio here · up to 64 MiB</small>
       <input aria-label="Choose footage" type="file" accept="video/mp4,video/quicktime,video/webm,audio/*" disabled={busy}
@@ -109,8 +115,9 @@ export function MediaLibrary({ id, timeline, onAdded, onInsert, close }: {
     <ul className="media-items">{[...timeline.assets].reverse().map(a => <li key={a.id}>
       {a.metadata?.thumbnail || !a.metadata ? <img src={a.metadata?.thumbnail ?? "/media/opening.jpg"} alt="" /> : <span className="audio-tile">♫</span>}
       <div><strong>{a.name}</strong><small>{(a.duration / timeline.fps).toFixed(1)} s · {a.metadata ? a.metadata.mediaType === "audio" ? "Audio" : a.metadata.width + " × " + a.metadata.height : "Sample footage"}</small>
-        <small>{a.metadata ? a.metadata.hasAudio ? "Playable · Transcript not started" : "Playable · No audio" : "Playable"}</small></div>
+        <small>{a.metadata && !a.metadata.hasAudio ? "Playable · No audio" : "Playable"}</small></div>
+      <button aria-label={"Inspect " + a.name} disabled={busy} onClick={() => setInspecting(a)}>Inspect</button>
       <button aria-label={"Insert " + a.name} disabled={busy} onClick={() => onInsert(a)}>Insert</button>
-    </li>)}</ul>
+    </li>)}</ul></>}
   </dialog>;
 }

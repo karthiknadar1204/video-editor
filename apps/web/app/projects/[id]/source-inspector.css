@@ -1,0 +1,26 @@
+.source-inspector { padding: 4px 18px 14px; font-size: 13px; }
+.source-inspector h3 { margin: 15px 0 10px; font-size: 19px; overflow-wrap: anywhere; }
+.source-inspector video, .source-inspector figure img { display: block; width: 100%; border-radius: 7px; background: #101013; }
+.source-inspector video { max-height: 225px; }
+.source-inspector audio { display: block; width: 100%; }
+.source-inspector figure { margin: 14px 0; }
+.source-inspector figcaption, .source-inspector p, .source-inspector small, .source-inspector details { color: var(--soft); line-height: 1.5; }
+.source-inspector header, .source-inspector nav { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin: 16px 0 10px; }
+.source-inspector header h4 { margin: 0; font-size: 15px; }
+.source-inspector header span { color: var(--soft); font-size: 12px; }
+.source-actions, .source-search, .source-word-form fieldset { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.source-inspector label { display: grid; gap: 4px; min-width: 0; font-size: 12px; }
+.source-actions label, .source-search label { flex: 1 1 155px; }
+.source-inspector input, .source-inspector select { max-width: 100%; min-width: 0; border-radius: 5px; padding: 6px; color: var(--paper); background: #111215; border: 1px solid var(--edge); }
+.source-words { display: flex; gap: 3px; flex-wrap: wrap; padding: 8px; border: 1px solid var(--edge); border-radius: 7px; }
+.source-words button { padding: 3px 5px; }
+.source-words button[aria-pressed=true] { background: var(--paper); color: #171719; }
+.source-word-form { padding: 10px; margin-top: 6px; border-radius: 6px; background: #222328; }
+.source-word-form fieldset { border: 0; padding: 6px 0 0; margin: 0; }
+.source-word-form label { flex: 1 1 70px; }
+.source-word-form .source-review { display: flex; align-items: center; flex-basis: 60%; }
+.source-search, .source-inspector details { margin-top: 18px; }
+.source-hits section { margin-top: 8px; padding: 10px; border-left: 2px solid var(--soft); background: #222328; }
+.source-hits strong, .source-hits small { display: block; overflow-wrap: anywhere; }
+.source-hits button { margin: 6px 6px 0 0; }
+.source-inspector details p { overflow-wrap: anywhere; }

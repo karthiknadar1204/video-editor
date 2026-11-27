@@ -139,6 +139,9 @@ export function CodexChat({
       : project.timeline.assets.find((a) => selected?.kind === "media" && a.id === selected.assetId)?.name;
   return (
     <div className="codex-chat">
+      <details className="codex-inputs"><summary>What Codex can see</summary>
+        <p>Your project timeline, selected clip, and the words or stills Codex requests. Original video and audio stay in media storage.</p>
+      </details>
       <div className="codex-messages" ref={bottom} aria-label="Conversation">
         {turns.map((r) => (
           <article key={r.id}>

@@ -45,6 +45,8 @@ body:has(.project-editor) .topbar { min-height:52px; padding-inline:clamp(14px,2
 .assistant-compose { padding:0 12px 12px; }
 .assistant-compose summary { color:var(--soft); font-size:11px; cursor:pointer; margin-bottom:5px; }
 .codex-chat { padding:10px 14px; border-bottom:1px solid var(--edge); }
+.codex-inputs { color:var(--soft); font-size:11px; line-height:1.5; margin-bottom:6px; }
+.codex-inputs summary { cursor:pointer; }
 .codex-chat form label,.connect-body label { display:grid; gap:5px; font-size:11px; color:var(--soft); }
 .codex-chat textarea,.connect-body input,.connect-body pre { padding:8px; width:100%; color:var(--paper); background:var(--ink); border:1px solid var(--edge); border-radius:6px; font:inherit; }
 .codex-chat textarea { min-height:55px; max-height:140px; resize:vertical; font-size:13px; }
@@ -97,7 +99,7 @@ body:has(.project-editor) .topbar { min-height:52px; padding-inline:clamp(14px,2
 .project-editor .sequence-panel { --surface:var(--panel-fill); --line:var(--edge); }
 .media-dialog { color:var(--paper); background:#1b1b1e; border:1px solid #484548; border-radius:14px; padding:0 0 15px; width:min(510px,94vw); max-height:85dvh; box-shadow:0 22px 80px #0009; }
 .media-dialog::backdrop { background:#08090bc4; }
-.media-dialog .studio-panel-title { padding:12px 18px; }
+.media-dialog .studio-panel-title { position:sticky; top:0; z-index:1; padding:12px 18px; background:#1b1b1e; }
 .upload-drop { display:grid; gap:5px; position:relative; text-align:center; padding:22px 15px; margin:16px; border:1px dashed #7a6750; border-radius:10px; background:#2a2622; cursor:pointer; }
 .upload-drop>span { color:var(--gold); font-size:22px; }
 .upload-drop small,.media-items small { color:var(--soft); font-size:11px; }

@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 import { correctWord, createEmptyTimeline, editTimeline, lookupTranscript, mapSourceRange, mediaClip, parseSubtitles, rushes, type SourcePlacement, type TranscriptWord } from "../src";
 
+test("a long source-time lookup returns bounded passages without omitting a word", () => {
+  const words = Array.from({ length: 121 }, (_, i) => ({ text: "word", startMs: i * 10, endMs: i * 10 + 10, timing: "word" as const }));
+  expect(lookupTranscript(words, { startMs: 0, endMs: 1210 }).map(m => [m.firstWord, m.lastWord]))
+    .toEqual([[0, 49], [50, 99], [100, 120]]);
+});
+
 test("SRT and WebVTT import the same spoken words and keep line-level timing estimated", () => {
   const srt = "\uFEFF1\r\n00:00:01,000 --> 00:00:02,001\r\n<i>Hello</i>\r\nworld!\r\n";
   const vtt = "WEBVTT\nKind: captions\n\nNOTE an editor's comment\nignore me\n\ncue-a\n00:01.000 --> 00:02.001 align:start\n<v Speaker>Hello\nworld!</v>";

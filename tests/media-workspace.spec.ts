@@ -32,7 +32,8 @@ test("a creator retries a phone upload, recovers a trimmed cut, adds a title and
   await library.getByRole("button", { name: "Retry upload" }).click();
   const item = library.getByRole("listitem").filter({ hasText: fileName });
   await expect(item).toContainText("540 × 960", { timeout:60_000 });
-  await expect(item).toContainText("Playable · Transcript not started");
+  await expect(item).toContainText("Playable");
+  await expect(item.getByRole("button", { name: "Inspect " + fileName })).toBeEnabled();
   await item.getByRole("button", { name: "Insert " + fileName }).click();
   await revision(2);
   const preview = page.getByRole("region", { name: "Project preview" });

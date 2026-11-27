@@ -107,8 +107,10 @@ export function lookupTranscript(words: readonly TranscriptWord[], query: Transc
   } else {
     let first: number | undefined;
     for (const [i, word] of words.entries()) {
-      if (word.startMs < query.endMs && query.startMs < word.endMs) first ??= i;
-      else if (first !== undefined) { matches.push(matchWords(words, first, i - 1)); first = undefined; }
+      if (word.startMs < query.endMs && query.startMs < word.endMs) {
+        first ??= i;
+        if (i - first === 49) { matches.push(matchWords(words, first, i)); first = undefined; }
+      } else if (first !== undefined) { matches.push(matchWords(words, first, i - 1)); first = undefined; }
     }
     if (first !== undefined) matches.push(matchWords(words, first, words.length - 1));
   }

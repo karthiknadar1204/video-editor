@@ -30,8 +30,8 @@ The [public sample](http://127.0.0.1:3000) plays and exports a fixed ten-second 
 | --- | --- |
 | `apps/web` | Account screens, project dashboard and canvas, and the public preview. |
 | `apps/api` | Hono serves accounts and project data. Drizzle schema and SQL migrations live here. |
-| `apps/runner` | Private loopback service that starts a pinned Codex app-server for an editor turn and supplies the five Cutroom tools. |
-| `apps/worker` | Node process that bundles the composition and renders H.264 video with AAC audio. |
+| `apps/runner` | Private loopback service that starts a pinned Codex app-server for an editor turn and supplies seven project-scoped tools. |
+| `apps/worker` | Renders the Remotion composition, transcribes source audio with whisper.cpp, and samples source video into timestamped contact sheets. |
 | `packages/timeline` | The sequence as data, including dimensions, frame rate, clip placement, and title timing. |
 | `packages/composition` | The Remotion component and local font used by both the browser and worker. |
 | `tests` | Playwright checks account recovery, access between two owners, the live export, frames, and audio. |
@@ -79,13 +79,28 @@ Local development uses `CUTROOM_MEDIA_STORAGE=local` and stores files under `.lo
 
 For hosted uploads, set `CUTROOM_MEDIA_STORAGE=imagekit`, `IMAGEKIT_PUBLIC_KEY`, `IMAGEKIT_PRIVATE_KEY`, and `IMAGEKIT_URL_ENDPOINT` on the API server. Use an ImageKit key with access to upload, read, list, and remove files in the project's media folder. The browser receives a ten-minute grant bound to a server-selected path, file size, and privacy settings. Hono verifies the uploaded file ID and path, decodes the original, and stores a seekable playback copy and a thumbnail. Owner-authorized delivery links expire after five minutes. The original is retained byte-for-byte for export. Configure the account to restrict unsigned media delivery. [ImageKit private media settings](https://imagekit.io/docs/media-delivery-basic-security)
 
-Uploads support MP4, MOV, WebM, M4A, MP3, WAV, and Ogg, up to 64 MiB and one hour per asset. The provider's account limits also apply. Clips can use ready footage immediately. Transcript status records whether the file has audio suitable for later transcription. The API checks for abandoned uploads at startup and every fifteen minutes. Unfinished uploads expire after 24 hours.
+Uploads support MP4, MOV, WebM, M4A, MP3, WAV, and Ogg, up to 64 MiB and one hour per asset. The provider's account limits also apply. Clips can use ready footage while source analysis runs. The API checks for abandoned uploads at startup and every fifteen minutes. Unfinished uploads expire after 24 hours.
 
 The local browser suite tests a rotated MOV with real video decoding and byte-range reads. To verify a configured ImageKit account, run the following browser checks. They upload test footage, compare the downloaded original byte-for-byte, recover an interrupted edit, reopen the project in a mobile browser context, and render a private MP4.
 
 ```sh
 E2E_LIVE_IMAGEKIT=1 bun --env-file=apps/api/.env.local run test tests/imagekit-live.spec.ts tests/media-workspace.spec.ts tests/project-export.spec.ts
 ```
+
+### Inspect and search footage
+
+Install the pinned English speech model and native recognizer on the API host. The installer needs CMake and a C++ compiler. It verifies the model and source checksums and keeps the build outside Git. The worker guide records the versions, fixture and timing benchmark. [Worker setup and benchmark](apps/worker/README.md)
+
+```sh
+bun run --cwd apps/worker setup:whisper
+```
+
+1. Open **Media library**, upload a recording and choose **Inspect**. Scrub the source player or inspect the timestamped contact sheet. Audio-only recordings have a player and transcript. Silent video still gets a contact sheet.
+2. Choose **Import subtitles** for SRT or WebVTT. Select a word to seek to it, play the source and correct its text or timing. The version selector lets you compare the original machine transcript, the imported words and your current corrections. An imported cue provides estimated word times until you review both boundaries.
+3. Search by phrase or source time. Each match shows its source interval and a button for each surviving use in the saved timeline. Select a button to seek and select that clip. Transcript changes are saved separately from timeline edits and Undo.
+4. Ask Codex “Where does the speaker say ‘your country’? Show me every use in the edit.” It can search project footage and request a labelled source contact sheet or a frame rendered from a saved edit. Original recordings stay in private media storage. Requested passages and stills can reach the model. Operational logs omit prompts, passages and private URLs.
+
+Analysis results are keyed by project, original asset, model and settings. Results survive restarts. A retry resumes missing parts, and word corrections survive retries or a model change. Previously uploaded media and the bundled sample start analysis on first inspection or search.
 
 ### Edit a title with Codex
 

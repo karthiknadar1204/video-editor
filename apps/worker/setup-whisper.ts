@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, rename } from "node:fs/promises";
+import { mkdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { cliPath, fixturePath, modelPath, whisper, whisperDir } from "./whisper";
 
@@ -21,7 +21,10 @@ async function download(url: string, path: string, sha: string) {
   const partial = path + ".part";
   await run(["curl", "--http1.1", "--fail", "--location", "--silent", "--show-error", "--retry", "3",
     "--max-time", "300", "--continue-at", "-", url, "--output", partial]);
-  if (!await verified(partial, sha)) throw new Error("The downloaded file did not match its pinned SHA-256: " + partial);
+  if (!await verified(partial, sha)) {
+    await rm(partial, { force: true });
+    throw new Error("Download checksum mismatch. Run setup again for " + path);
+  }
   await rename(partial, path);
 }
 

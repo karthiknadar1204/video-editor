@@ -146,7 +146,8 @@ export function Editor({ initial }: { initial: ProjectSnapshot }) {
       onSelect={choose} onSeek={seek} onEdit={ops => void submit(ops)} onPreview={setPreview}
       toolbar={<div className="history-buttons"><button disabled={!editable || !project.canUndo} onClick={() => void save("undo")}>Undo</button>
         <button disabled={!editable || !project.canRedo} onClick={() => void save("redo")}>Redo</button></div>} />
-    {mediaOpen && <MediaLibrary id={project.id} timeline={timeline} onAdded={syncAssets} onInsert={insertAsset} close={() => setMediaOpen(false)} />}
+    {mediaOpen && <MediaLibrary id={project.id} timeline={timeline} revision={revision} onAdded={syncAssets} onInsert={insertAsset}
+      onJump={(id, at) => { choose(id); seek(at); setMediaOpen(false); setMobileTab("timeline"); }} close={() => setMediaOpen(false)} />}
     {connectOpen && <CodexConnect id={project.id} close={()=>setConnectOpen(false)} />}
   </main>;
 }

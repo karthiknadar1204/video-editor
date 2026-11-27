@@ -142,6 +142,9 @@ test("Codex finds a split source passage and distinguishes its original contact 
   await expect(activity).toContainText("Model received the rendered frame", { timeout: 90_000 });
   await expect(chat.getByRole("button", { name: "Stop Codex" })).toHaveCount(0, { timeout: 60_000 });
   await expect(activity).not.toContainText(phrase);
+  const reply = chat.locator("article p:not(.codex-prompt)").last();
+  await expect(reply).toContainText(/source|original/i);
+  await expect(reply).toContainText(/timeline|edited|committed/i);
   const after = await (await page.request.get(project)).json();
   expect(after.revision).toBe(revision);
 });
