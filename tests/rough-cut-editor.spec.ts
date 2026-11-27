@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
+import { isDeepStrictEqual } from "node:util";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { mediaClip, projectSnapshot, roughCutReceiptSchema } from "../packages/timeline/src";
 import { signup } from "./accounts";
@@ -13,6 +14,46 @@ const prompt =
 
 const measure = process.env.E2E_RELEASE_METRICS === "1";
 const elapsed = (start: number) => Math.round(performance.now() - start);
+
+type FixtureWord = { text: string; startMs: number; endMs: number };
+type TranscriptWrite = { revision: number } & ({ subtitles: string } | { index: number; correction: Omit<FixtureWord, "text"> });
+async function saveTranscript(page: Page, endpoint: string, write: TranscriptWrite, words: FixtureWord[]) {
+  let reading = false, conflict = false;
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    const request = reading ? page.request.get(endpoint) : page.request.put(endpoint, { data: write });
+    const response = await request.catch((error: unknown) => {
+      const first = error instanceof Error ? error.message.split("\n", 1)[0] : "";
+      if (/ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|EAI_AGAIN|socket hang up|request timed out|timeout .*exceeded/i.test(first)) return null;
+      throw new Error("Fixture transcript request failed in the client.");
+    });
+    const status = response?.status() ?? 0;
+    if (!reading && status === 204) return;
+    const body = await response?.json().catch(() => null);
+    if (reading && status === 200) {
+      const rev = body?.revision;
+      if (rev !== write.revision && rev !== write.revision + 1) throw new Error("Fixture transcript revision changed.");
+      const expected = words.map((w, i) => ({ ...w, timing: i < rev - 1 ? "corrected" : "estimated" }));
+      if (rev > 0 && !(body.hasImport && body.total === words.length && isDeepStrictEqual(body.words, expected))) {
+        throw new Error("Fixture transcript content changed.");
+      }
+      if (rev === write.revision + 1) return;
+      if (conflict) throw new Error("Fixture transcript write conflicted.");
+      reading = false;
+      continue;
+    }
+    const codes = ["database_connection", "transaction_contention", "database_constraint", "analysis_unexpected"];
+    const code = codes.includes(body?.code) ? String(body.code) : "http";
+    if (!reading && status === 409) conflict = true;
+    else if (![0, 408, 502, 504].includes(status) &&
+        !(status === 503 && (!body?.code || ["database_connection", "transaction_contention"].includes(code)))) {
+      throw new Error("Fixture transcript request failed (" + status + ", " + code + ").");
+    }
+    console.info("Checking fixture transcript after request", status, code);
+    reading = true;
+    await delay(150 * attempt);
+  }
+  throw new Error("Fixture transcript recovery budget exhausted.");
+}
 
 async function observeNativeTranscript(page: Page, endpoint: string, uploadAt: number) {
   while (elapsed(uploadAt) < 90_000) {
@@ -124,7 +165,7 @@ async function prepare(page: Page, info: TestInfo) {
   const create = await page.request.post("/api/projects", {
     data: { title: "Apollo interview review", format: "landscape" },
   });
-  await expect(create).toBeOK();
+  expect(create.status(), "Fixture project creation").toBe(201);
   const { id } = await create.json(),
     base = "/api/projects/" + id,
     editor = "/projects/" + id;
@@ -141,7 +182,7 @@ async function prepare(page: Page, info: TestInfo) {
   const endpoint = base + "/assets/" + source.id + "/analysis";
   const verifyNative = measure || process.env.E2E_RELEASE_TARGET === "staging" || process.env.CUTROOM_TEST_WHISPER === "1";
   const nativeTranscript = verifyNative ? observeNativeTranscript(page, endpoint, uploadAt).catch(() => null) : null;
-  const words: { text: string; startMs: number; endMs: number }[] = [];
+  const words: FixtureWord[] = [];
   function phrase(text: string, bounds: number[], offset: number) {
     for (const [i, word] of text.split(" ").entries())
       words.push({ text: word, startMs: offset + bounds[i], endMs: offset + bounds[i + 1] });
@@ -152,24 +193,19 @@ async function prepare(page: Page, info: TestInfo) {
     "00:" + String(Math.floor(ms / 1000)).padStart(2, "0") + "." + String(ms % 1000).padStart(3, "0");
   const subtitles =
     "WEBVTT\n\n" + words.map((w) => stamp(w.startMs) + " --> " + stamp(w.endMs) + "\n" + w.text).join("\n\n");
-  await expect(await page.request.put(endpoint, { data: { revision: 0, subtitles } })).toBeOK();
+  await saveTranscript(page, endpoint, { revision: 0, subtitles }, words);
   for (const [i, w] of words.entries())
-    await expect(
-      await page.request.put(endpoint, {
-        data: { revision: i + 1, index: i, correction: { startMs: w.startMs, endMs: w.endMs } },
-      }),
-    ).toBeOK();
+    await saveTranscript(page, endpoint, { revision: i + 1, index: i, correction: { startMs: w.startMs, endMs: w.endMs } }, words);
   const clip = mediaClip("interview", source.id, 0, source.duration);
-  await expect(
-    await page.request.post(base + "/edits", {
+  const added = await page.request.post(base + "/edits", {
       data: {
         kind: "edit",
         expectedRevision: original.revision,
         requestId: randomUUID(),
         operations: [{ type: "add", clip }],
       },
-    }),
-  ).toBeOK();
+  });
+  expect(added.status(), "Fixture clip insertion").toBe(200);
   await page.goto(editor);
   const uploadToNativeTranscriptMs = await nativeTranscript;
   if (verifyNative) expect(uploadToNativeTranscriptMs, "The uploaded interview must produce a native speech transcript.").not.toBeNull();
@@ -364,7 +400,7 @@ test("external Codex inspects two rough-cut candidates, commits one edit group a
       headers: { Authorization: "Bearer " + key, Accept: "application/json, text/event-stream" },
       data: { jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name, arguments: args } },
     });
-    await expect(response).toBeOK();
+    expect(response.status(), "External MCP status").toBe(200);
     const { result } = await response.json();
     expect(result.isError).not.toBe(true);
     return JSON.parse(result.content[0].text);

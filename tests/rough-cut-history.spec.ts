@@ -21,6 +21,9 @@ test("a concurrent edit rebases the candidate, commits once, and targeted undo r
   await expect(await page.request.post(drafts, { data: input })).toBeOK();
   expect((await page.request.post(drafts, { data: { ...input, options: { ...input.options, breathingRoomMs: 500 } } })).status()).toBe(409);
   expect((await request.get(path)).status()).toBe(401);
+  for (let i = 0; i < 30; i++) {
+    await expect(await page.request.post(drafts, { data: { ...input, requestId: randomUUID() } })).toBeOK();
+  }
   await expect(await edit(1, [{ type: "add", clip: textClip("title", "New title", 0, 30, 720) }])).toBeOK();
   const commit = (expectedRevision: number) => page.request.post(path + "/commit", { data: { expectedRevision } });
   expect(await (await commit(1)).json()).toMatchObject({ rebased: true, receipt: null, review: { baseRevision: 2, status: "draft" } });
@@ -43,9 +46,6 @@ test("a concurrent edit rebases the candidate, commits once, and targeted undo r
   expect((await (await page.request.get(root)).json()).timeline.clips.find((c: {id:string}) => c.id === "title").text).toBe("Keep my edit");
   await expect(await page.request.post(path + "/undo", { data: { expectedRevision: 5, requestId: randomUUID() } })).toBeOK();
   expect(await (await page.request.get(path)).json()).toMatchObject({ restoredIds: [], status: "applied", canUndoReview: false });
-  for (let i = 0; i < 30; i++) {
-    await expect(await page.request.post(drafts, { data: { ...input, requestId: randomUUID() } })).toBeOK();
-  }
   const firstPage = await (await page.request.get(drafts)).json();
   expect(firstPage.reviews).toHaveLength(30);
   const older = await (await page.request.get(drafts + "?offset=" + firstPage.nextOffset)).json();

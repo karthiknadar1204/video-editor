@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import postgres from "postgres";
-import { textClip } from "../packages/timeline/src/model";
+import { mediaClip, rushes, textClip } from "../packages/timeline/src/model";
 import { signup } from "./accounts";
 import { testDatabase, webOrigin } from "./local";
 
@@ -126,6 +126,26 @@ test("a turn's captured tab, clip and revision govern every MCP title edit", asy
   const latest = await (await page.request.get(path)).json();
   expect(latest.revision).toBe(3);
   expect(latest.timeline.clips.map((c: { text: string }) => c.text)).toEqual(["Behind the scenes", "Edited in another tab"]);
+});
+
+test("stopping a rough-cut preview hides the draft and leaves its source and captions untouched", async ({ page, request }) => {
+  await signup(page, randomUUID() + "@cutroom.test");
+  const create = await page.request.post("/api/projects", { data: { title: "Unfinished candidate", format: "landscape" } });
+  const { id } = await create.json(), path = "/api/projects/" + id;
+  const clip = mediaClip("interview", rushes.id, 0, 90);
+  await expect(await page.request.post(path + "/edits", { data: { kind: "edit", requestId: randomUUID(), expectedRevision: 0, operations: [{ type: "add", clip }] } })).toBeOK();
+  await expect(await page.request.put(path + "/assets/" + rushes.id + "/analysis", { data: { revision: 0, subtitles: "WEBVTT\n\n00:00.300 --> 00:01.200\nLaunch" } })).toBeOK();
+  const before = await (await page.request.get(path)).json(), run = await activeTurn(id, clip.id, 1);
+  const result = await tool(request, run.key, "rough_cut", { action: "preview", revision: 1, options: { target: { clipId: clip.id } } });
+  const draft = data(result);
+  expect(draft).toMatchObject({ kind: "rough_cut_candidate", captionCount: 1 });
+  expect(result.content.some((c: { type: string }) => c.type === "image")).toBe(true);
+  expect((await page.request.delete(path + "/runs/" + run.id)).status()).toBe(204);
+  expect((await page.request.post(path + "/rough-cuts/" + draft.reviewId + "/commit", { data: { expectedRevision: 1 } })).status()).toBe(409);
+  expect(await (await page.request.get(path + "/rough-cuts")).json()).toMatchObject({ reviews: [] });
+  const after = await (await page.request.get(path)).json();
+  expect(after.timeline).toEqual(before.timeline);
+  expect(after.revision).toBe(before.revision);
 });
 
 test("Stop immediately after a committed MCP edit preserves its single receipt and rejects future tools", async ({ page, request }) => {
