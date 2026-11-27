@@ -50,10 +50,23 @@ test("ripple handles crossing cuts, linked tracks, locks and explicit music sele
   const op = { type: "rippleDelete", id: "cut", tracks: ["speech"], cutId: "r" } as const;
   const edit = editTimeline(t, [{ ...op, tracks: [...op.tracks] }]);
   expect(edit.timeline.clips).toMatchObject([{ id: "next", start: 30 }, { id: "voice", duration: 10 },
-    { id: "r:voice", start: 20, sourceStart: 30, duration: 40 }, { id: "music", start: 0, duration: 100 }, { id: "line", start: 32 }]);
+    { track: "speech", start: 20, sourceStart: 30, duration: 40 }, { id: "music", start: 0, duration: 100 }, { id: "line", start: 32 }]);
   expect(applyPatch(edit.timeline, edit.inverse)).toEqual(t);
   expect(() => editTimeline(t, [{ type: "lock", track: "caption", locked: true }, { ...op, tracks: [] }])).toThrow("Unlock");
-  expect(editTimeline(t, [{ ...op, tracks: ["music"] }]).timeline.clips.find(c => c.id === "r:music")).toMatchObject({ start: 20, sourceStart: 40 });
+  expect(editTimeline(t, [{ ...op, tracks: ["music"] }]).timeline.clips.find(c => c.track === "music" && c.start === 20)).toMatchObject({ sourceStart: 40 });
+});
+
+test("repeated splits of a linked take retain bounded stable IDs and matching source starts", () => {
+  let t = withClips({ ...media("picture", 0, 150), linkId: "take" },
+    { ...media("voice", 0, 150), track: "speech", linkId: "take" });
+  let id = "picture";
+  for (let frame = 10; frame <= 100; frame += 10) {
+    const rightId = crypto.randomUUID();
+    t = editTimeline(t, [{ type: "split", id, rightId, frame }]).timeline;
+    id = rightId;
+  }
+  expect(t.clips).toHaveLength(22);
+  expect(t.clips.filter(c => c.start === 100)).toMatchObject([{ sourceStart: 100 }, { sourceStart: 100 }]);
 });
 
 test("invalid source references, incompatible tracks, zero-length clips and negative linked moves fail", () => {

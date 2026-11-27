@@ -79,9 +79,8 @@ projects.get("/:id/events", async c => {
   let current = await getRevision();
   if (current === undefined) return c.json({ error: "Project not found." }, 404);
   let seen = Number(c.req.header("Last-Event-ID") ?? c.req.query("since") ?? -1);
-  c.header("Cache-Control", "private, no-store, no-transform");
   c.header("X-Accel-Buffering", "no");
-  return streamSSE(c, async stream => {
+  const response = streamSSE(c, async stream => {
     await stream.write(": connected\n\n");
     let beats = 0;
     while (!stream.aborted) {
@@ -94,4 +93,7 @@ projects.get("/:id/events", async c => {
       if (!stream.aborted) current = await getRevision();
     }
   });
+  // streamSSE sets its own cache header. Keep proxies from compressing and buffering revision notices.
+  response.headers.set("Cache-Control", "private, no-store, no-transform");
+  return response;
 });

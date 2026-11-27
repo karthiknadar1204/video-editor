@@ -5,6 +5,11 @@ export class EditError extends Error {}
 const end = (clip: Clip) => clip.start + clip.duration;
 const linked = (a: Clip, b: Clip) => a.id === b.id || (a.linkId !== null && a.linkId === b.linkId);
 
+// Use the operation ID and the original clip index so repeated cuts never grow IDs recursively.
+function partId(operationId: string, kind: "clip" | "group", index: number) {
+  return operationId.slice(0, 180) + ":" + kind + ":" + index;
+}
+
 function slice(clip: Clip, from: number, to: number): Clip {
   const range = { start: from, duration: to - from };
   return clip.kind === "media"
@@ -43,15 +48,20 @@ function ripple(t: Timeline, selected: Clip, op: Extract<Change, { type: "ripple
   const from = selected.start, to = end(selected), length = selected.duration;
   const chosen = new Set([selected.track, ...op.tracks]);
   const groups = new Set(t.clips.filter(c => chosen.has(c.track) && end(c) > from && c.linkId).map(c => c.linkId));
-  const leftGroups = new Set(t.clips.filter(c => c.linkId && groups.has(c.linkId) && c.start < from).map(c => c.linkId));
+  const rightGroups = new Map<string, string>();
+  for (const [index, c] of t.clips.entries()) {
+    if (c.linkId && groups.has(c.linkId) && c.start < from && !rightGroups.has(c.linkId)) {
+      rightGroups.set(c.linkId, partId(op.cutId, "group", index));
+    }
+  }
   const clips: Clip[] = [];
-  for (const c of t.clips) {
+  for (const [index, c] of t.clips.entries()) {
     if ((!chosen.has(c.track) && !(c.linkId && groups.has(c.linkId))) || end(c) <= from) {
       clips.push(c);
       continue;
     }
     unlocked(t, c.track);
-    const tailLink = c.linkId && leftGroups.has(c.linkId) ? op.cutId + ":" + c.linkId : c.linkId;
+    const tailLink = c.linkId && (rightGroups.get(c.linkId) ?? c.linkId);
     if (c.start >= to) {
       clips.push({ ...c, start: c.start - length, linkId: tailLink });
       continue;
@@ -59,7 +69,7 @@ function ripple(t: Timeline, selected: Clip, op: Extract<Change, { type: "ripple
     if (c.start < from) clips.push(slice(c, c.start, from));
     if (end(c) > to) {
       const tail = slice(c, to, end(c));
-      clips.push({ ...tail, start: from, linkId: tailLink, id: c.start < from ? op.cutId + ":" + c.id : c.id });
+      clips.push({ ...tail, start: from, linkId: tailLink, id: c.start < from ? partId(op.cutId, "clip", index) : c.id });
     }
   }
   t.clips = clips;
@@ -106,7 +116,7 @@ function apply(t: Timeline, op: Change) {
   const oldStart = selected.start, oldEnd = end(selected);
   if (op.type === "split" && (op.frame <= oldStart || op.frame >= oldEnd)) throw new EditError("Split inside the selected clip.");
   if (op.type === "trim" && (op.edge === "left" ? op.frame >= oldEnd : op.frame <= oldStart)) throw new EditError("Keep at least one frame.");
-  t.clips = t.clips.flatMap((c): Clip[] => {
+  t.clips = t.clips.flatMap((c, index): Clip[] => {
     if (!linked(selected, c)) return [c];
     unlocked(t, c.track);
     switch (op.type) {
@@ -125,10 +135,10 @@ function apply(t: Timeline, op: Change) {
         return from < to ? [slice(c, from, to)] : [];
       }
       case "split": {
-        const linkId = c.linkId === null ? null : "split:" + op.rightId;
+        const linkId = c.linkId === null ? null : partId(op.rightId, "group", 0);
         if (end(c) <= op.frame) return [c];
         if (c.start >= op.frame) return [{ ...c, linkId }];
-        const rightId = c.id === selected.id ? op.rightId : op.rightId + ":" + c.id;
+        const rightId = c.id === selected.id ? op.rightId : partId(op.rightId, "clip", index);
         return [slice(c, c.start, op.frame), { ...slice(c, op.frame, end(c)), id: rightId, linkId }];
       }
     }
