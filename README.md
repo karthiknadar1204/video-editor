@@ -90,7 +90,7 @@ E2E_LIVE_IMAGEKIT=1 bun --env-file=apps/api/.env.local run test tests/imagekit-l
 ### Edit a title with Codex
 
 1. Copy `apps/runner/.env.example` to `apps/runner/.env.local`. Put your OpenAI API key there. Generate a fresh secret with `openssl rand -hex 32` and set the same `CUTROOM_RUNNER_SECRET` in the API and runner env files. Keep both files private.
-2. Run the database migration and `bun run dev` from the repository root. The editor, Hono API, and private runner use loopback ports 3000, 4000, and 4200. Only the runner needs the model credential.
+2. Run the database migration and `bun run dev` from the repository root. If the shell already exports a different OpenAI key, use `env -u OPENAI_API_KEY bun run dev` to select the key in the runner's local file. The editor, Hono API, and private runner use loopback ports 3000, 4000, and 4200. Only the runner needs the model credential.
 3. Add a title clip and select it. In **Ask Codex**, enter “Change this to Behind the scenes.” The conversation captures the clip, playhead, range, tab, and saved revision. The assistant can inspect a rendered frame at that revision. **Undo** restores the original title after refresh.
 4. Use **Stop Codex** to interrupt a turn. Any edit already committed appears in the conversation with its revision. Reloading the same editor tab reattaches to the turn. Completed requests in that tab supply context for follow-ups.
 5. To connect a separate Codex client, open **Connect Codex**, create a project key, and copy it into the client's `CUTROOM_MCP_KEY` environment variable. Run the displayed `codex mcp add` command. Ask the client to read the project, then identify the title by clip ID. **Revoke project key** ends access on its next call. Keys expire in 30 days.
@@ -100,7 +100,7 @@ Hono enforces daily per-owner allowances before starting a turn or a private ren
 The regular browser suite runs the pinned Codex binary with a local model fixture and checks actual image delivery. To repeat the accepted edit against OpenAI, run the optional live tests with your runner credential:
 
 ```sh
-E2E_LIVE_CODEX=1 bun --env-file=apps/runner/.env.local run test tests/codex-editor.spec.ts -g 'Codex edits|external Codex'
+env -u OPENAI_API_KEY E2E_LIVE_CODEX=1 bun --env-file=apps/runner/.env.local run test tests/codex-editor.spec.ts -g 'Codex edits|external Codex'
 ```
 
 ### Database and authentication

@@ -51,6 +51,7 @@ test("Codex edits the selected title, sees the saved frame and reattaches after 
     { id: "closing", text: "Behind the scenes" },
   ]);
   await expect(chat.getByRole("list", { name: "Activity" })).toContainText(/Frame \d+ at revision 2 · ready/i);
+  await expect(chat.getByRole("list", { name: "Activity" })).toContainText("Model received the rendered frame");
   if (beforeImages !== null) expect(await observed()).toBeGreaterThan(beforeImages);
   await page.reload();
   await page.getByRole("button", { name: "Undo", exact: true }).click();

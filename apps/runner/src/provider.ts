@@ -86,13 +86,19 @@ const event = (type: string, data: object) =>
 
 // The CLI also declares general computer tools. The provider accepts exactly one native MCP namespace,
 // and validates the complete upstream response before emitting any callable item back to the CLI.
-export function openProvider(options: { baseUrl: string; apiKey: string; model: string; signal: AbortSignal }) {
+const nativeImage = z.object({ type: z.literal("input_image"), image_url: z.string().startsWith("data:image/") });
+const contentParts = z.object({ output: z.array(z.unknown()).optional(), content: z.array(z.unknown()).optional() });
+
+export function openProvider(options: {
+  baseUrl: string; apiKey: string; model: string; signal: AbortSignal; onImageReceived: () => void | Promise<void>;
+}) {
   const base = new URL(options.baseUrl);
   if (!(base.origin === "https://api.openai.com" || (base.hostname === "127.0.0.1" && base.protocol === "http:"))) {
     throw new Error("Configure the OpenAI API or the loopback test model.");
   }
   const key = crypto.randomUUID();
   let failure: RunnerError | undefined;
+  let imageReceived = false;
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -141,6 +147,13 @@ export function openProvider(options: { baseUrl: string; apiKey: string; model: 
         });
         if (!upstream.ok) throw await serviceError(upstream);
         const reply = modelReply.parse(await upstream.json());
+        if (!imageReceived && data.input.some((item) => {
+          const parts = contentParts.safeParse(item);
+          return parts.success && (parts.data.output ?? parts.data.content ?? []).some(part => nativeImage.safeParse(part).success);
+        })) {
+          imageReceived = true;
+          await options.onImageReceived();
+        }
         let output = event("response.created", { response: { id: reply.id } });
         for (const [index, item] of reply.output.entries()) {
           output += event("response.output_item.done", { output_index: index, item });

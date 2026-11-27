@@ -77,6 +77,7 @@ test("a real Codex subprocess receives only the project namespace and examines t
     expect(calls).toEqual(["read_project", "inspect_selection", "update_title", "render_frame"]);
     expect(reply).toContain("inspected the saved frame");
     expect(activities).toContain("Checking a frame from the saved revision");
+    expect(activities).toContain("Model received the rendered frame");
     const obs = await (await fetch(fixture.url.origin + "/observations")).json();
     expect(obs.nativeImages).toBeGreaterThan(0);
     for (const seen of obs.toolsets)
