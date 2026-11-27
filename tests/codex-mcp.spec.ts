@@ -57,7 +57,7 @@ test("external MCP holds a single-project key, edits exactly one title and loses
     data: { jsonrpc: "2.0", method: "notifications/initialized" } });
   expect(notification.status()).toBe(202);
   const tools = (await (await protocol(request, key, "tools/list", {})).json()).result.tools;
-  expect(tools.map((t: { name: string }) => t.name).sort()).toEqual(["export_status", "inspect_selection", "inspect_source", "list_assets", "read_project", "render_frame", "rough_cut", "search_transcript", "start_export", "update_title"]);
+  expect(tools.map((t: { name: string }) => t.name).sort()).toEqual(["export_status", "inspect_selection", "inspect_source", "list_assets", "place_media", "read_project", "render_frame", "rough_cut", "search_transcript", "start_export", "update_title"]);
   expect((await info()).lastUsedAt).toBeTruthy();
   expect(data(await tool(request, key, "read_project", {}))).toMatchObject({ id, revision: 1, clips: { total: 2 } });
   expect(data(await tool(request, key, "list_assets", {})).assets.total).toBeGreaterThan(0);
@@ -97,6 +97,32 @@ test("external MCP holds a single-project key, edits exactly one title and loses
   expect(final.timeline.clips[1].text).toBe(savedBeforeRevoke ? "Final cut" : "Closing");
   expect((await protocol(request, replacement, "tools/list", {})).status()).toBe(401);
   expect((await info()).connected).toBe(false);
+});
+
+test("external MCP places video and voice together, retries once and undoes both together", async ({ page, request }) => {
+  await signup(page, randomUUID() + "@cutroom.test");
+  const created = await page.request.post("/api/projects", { data: { title: "Narrated cut", format: "portrait" } });
+  const { id } = await created.json();
+  const path = "/api/projects/" + id;
+  const { key } = await (await page.request.post(path + "/connection", { data: {} })).json();
+  const place = (revision: number, placements: object[]) => tool(request, key, "place_media", { revision, placements });
+  const shot = { assetId: rushes.id, start: 0, duration: 30, track: "video" };
+  const voice = { ...shot, duration: 15, track: "speech", sourceStart: 60 };
+  expect(data(await place(0, [shot])).revision).toBe(1);
+  const nextShot = { ...shot, start: 30 };
+  const nextVoice = { ...voice, start: 30 };
+  expect((await place(1, [nextShot, { ...nextVoice, assetId: "absent" }])).isError).toBe(true);
+  const first = data(await place(1, [nextShot, nextVoice]));
+  expect(first.revision).toBe(2);
+  expect(data(await place(1, [nextShot, nextVoice]))).toEqual(first);
+  expect((await place(1, [{ ...shot, start: 60 }])).isError).toBe(true);
+  expect((await place(2, [shot])).isError).toBe(true);
+  const clips = async () => data(await tool(request, key, "read_project", {})).clips.items;
+  expect(await clips()).toMatchObject([shot, nextShot, nextVoice]);
+  await expect(await page.request.post(path + "/edits", { data: {
+    kind: "undo", requestId: randomUUID(), expectedRevision: 2,
+  } })).toBeOK();
+  expect(await clips()).toMatchObject([shot]);
 });
 
 test("a turn's captured tab, clip and revision govern every MCP title edit", async ({ page, request }) => {

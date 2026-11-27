@@ -122,6 +122,8 @@ Analysis results are keyed by project, original asset, model and settings. Resul
 4. Use **Stop Codex** to interrupt a turn. Any edit already committed appears in the conversation with its revision. Reloading the same editor tab reattaches to the turn. Completed requests in that tab supply context for follow-ups.
 5. To connect a separate Codex client, open **Connect Codex**, create a project key, and copy it into the client's `CUTROOM_MCP_KEY` environment variable. Run the displayed `codex mcp add` command. Ask the client to read the project, then identify the title by clip ID. **Revoke project key** ends access on its next call. Keys expire in 30 days.
 
+External MCP clients can use `place_media` to insert project library assets together. Read the saved revision with `read_project` and source IDs with `list_assets`. For a narrated ending, place video and speech at the same start frame on their respective tracks. Both insertions share one undo step. Use `start_export` with the revision returned by the edit.
+
 Hono enforces daily per-owner allowances before starting a turn or a private render. Configure `CUTROOM_DAILY_TURNS` and `CUTROOM_DAILY_RENDERS` in the API. Repeating the same turn ID or polling a saved frame does not use another allowance. The private frame queue renders the common Remotion composition and returns the image, timestamp, and committed revision over MCP.
 
 The regular browser suite runs the pinned Codex binary with a local model fixture and checks actual image delivery. To repeat the accepted edit against OpenAI, run the optional live tests with your runner credential:

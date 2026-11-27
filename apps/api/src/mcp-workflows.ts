@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { EditError, roughCutOptionsSchema } from "@editor/timeline";
+import { EditError, mediaClip, roughCutOptionsSchema, type Change } from "@editor/timeline";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { authorizeProjectAccess, type ProjectAccess } from "./codex-access";
 import { startExport, getExport } from "./export-jobs";
+import { saveEdit } from "./history";
 import {
   previewRoughCut,
   reviewFrame,
@@ -51,6 +52,32 @@ function reviewSummary(review: Review, offset = 0) {
 
 export function registerWorkflows(server: McpServer, access: ProjectAccess, call: Call) {
   const privateScope = access.kind === "run" ? access.id : access.hash;
+  if (access.kind === "external") {
+    server.registerTool("place_media", {
+      title: "Place media on the timeline",
+      description: "Insert library video or audio clips in one undoable edit. Use list_assets for source IDs and durations, and read_project for the saved revision and frame positions. Use the same start frame on separate tracks for a voiceover. To append video, start it at the end of the last video clip. Times are in project frames. Retrying identical arguments returns the original receipt.",
+      inputSchema: {
+        revision: number,
+        placements: z.array(z.strictObject({
+          assetId: z.string().min(1).max(200), track: z.enum(["video", "speech", "music"]),
+          start: number, duration: z.int().positive(), sourceStart: number.default(0),
+          volume: z.number().min(0).max(1).default(1),
+        })).min(1).max(200),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, ({ revision, placements }) => call("place_media", async () => {
+      const requestId = stableRequestId([access.projectId, "place_media", revision, placements]);
+      const operations = placements.map(({ assetId, track, start, duration, sourceStart, volume }, index) => ({
+        type: "add", clip: { ...mediaClip(stableRequestId([requestId, index]), assetId, start, duration),
+          track, sourceStart, volume, fit: "contain" },
+      } satisfies Change));
+      const receipt = await saveEdit(access.projectId, access.ownerId, {
+        kind: "edit", expectedRevision: revision, requestId, operations,
+      }, { before: async tx => { await authorizeProjectAccess(tx, access); } });
+      return { result: packet({ ...receipt, clipIds: operations.map(op => op.clip.id) }),
+        detail: "Placed " + operations.length + " clips at revision " + receipt.revision };
+    }));
+  }
   async function candidate(review: Review, requestedFrame?: number, rebased = false) {
     const frame = requestedFrame ?? review.receipt.previewFrames[0] ?? 0;
     const image = await reviewFrame(access, review.id, frame);
