@@ -1,4 +1,4 @@
-import type { EditRequest, Patch, Timeline } from "@editor/timeline";
+import type { EditorContext, EditRequest, Patch, RunActivity, RunView, Timeline } from "@editor/timeline";
 import { bigint, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 const time = (name: string) => timestamp(name, { withTimezone: true });
@@ -92,3 +92,34 @@ export const projectAsset = pgTable("project_asset", {
   asset: jsonb().$type<Timeline["assets"][number]>(),
   expiresAt: time("expires_at").notNull(),
 }, t => [index().on(t.projectId), index().on(t.state, t.expiresAt)]);
+
+export const codexConnection = pgTable("codex_connection", {
+  projectId: uuid("project_id").primaryKey().references(() => project.id, {onDelete:"cascade"}),
+  secretHash: text("secret_hash").unique().notNull(),
+  expiresAt: time("expires_at").notNull(), lastUsedAt: time("last_used_at"),
+});
+
+export const codexRun = pgTable("codex_run", {
+  id: uuid().primaryKey(),
+  projectId: uuid("project_id").notNull().references(() => project.id, {onDelete:"cascade"}),
+  ownerId: text("owner_id").notNull().references(() => user.id, {onDelete:"cascade"}),
+  tabId: uuid("tab_id").notNull(), context: jsonb().$type<EditorContext>().notNull(),
+  prompt: text().notNull(), status: text({enum:["running","completed","stopped","failed"]}).notNull(),
+  tokenHash: text("token_hash").unique().notNull(), expiresAt: time("expires_at").notNull(),
+  lastReadRevision: integer("last_read_revision"),
+  events: jsonb().$type<RunActivity[]>().notNull().default([]),
+  result: text(), receipt: jsonb().$type<NonNullable<RunView["receipt"]>>(),
+  createdAt: time("created_at").defaultNow().notNull(),
+}, t => [index().on(t.projectId,t.tabId,t.createdAt)]);
+
+export const agentUsage = pgTable("agent_usage", {
+  ownerId:text("owner_id").notNull().references(() => user.id, {onDelete:"cascade"}),
+  day:text().notNull(), kind:text({enum:["turn","render"]}).notNull(), count:integer().notNull(),
+}, t => [primaryKey({columns:[t.ownerId,t.day,t.kind]})]);
+
+export const frameJob = pgTable("frame_job", {
+  id:uuid().primaryKey(), projectId:uuid("project_id").notNull().references(() => project.id, {onDelete:"cascade"}),
+  revision:integer().notNull(), frame:integer().notNull(), fps:integer().notNull(),
+  timeline:jsonb().$type<Timeline>(), status:text({enum:["queued","running","ready","failed"]}).notNull().default("queued"),
+  data:text(), error:text(), ...timestamps(),
+}, t => [unique().on(t.projectId,t.revision,t.frame), index().on(t.status,t.createdAt)]);

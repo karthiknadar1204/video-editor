@@ -2,6 +2,7 @@ import { z } from "zod";
 import { frame, mediaClip, rushes, sample, textClip, timelineSchema, type Timeline } from "./model";
 export * from "./model";
 export * from "./edits";
+export * from "./codex";
 
 export const canvasFormats = ["landscape", "portrait", "square"] as const;
 export type CanvasFormat = typeof canvasFormats[number];

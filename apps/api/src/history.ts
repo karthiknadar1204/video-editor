@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { applyPatch, editLabel, editTimeline, readTimeline, type EditRequest } from "@editor/timeline";
+import { applyPatch, editLabel, editTimeline, readTimeline, type EditRequest, type RunView } from "@editor/timeline";
 import { and, asc, desc, eq, lte, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import { project, projectEdit } from "./db/schema";
@@ -25,8 +25,14 @@ export class HistoryError extends Error {
   constructor(readonly status: 404 | 409 | 422, message: string, readonly revision?: number) { super(message); }
 }
 
-export async function saveEdit(id: string, owner: string, command: EditRequest) {
+export type EditTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type EditReceipt = NonNullable<RunView["receipt"]>;
+export async function saveEdit(id: string, owner: string, command: EditRequest, hooks?: {
+  before?: (tx: EditTransaction) => Promise<void>;
+  after?: (tx: EditTransaction, receipt: EditReceipt) => Promise<void>;
+}) {
   return db.transaction(async tx => {
+    await hooks?.before?.(tx);
     const [row] = await tx.select().from(project).where(owned(id, owner)).for("update");
     if (!row) throw new HistoryError(404, "Project not found.");
     const within = eq(projectEdit.projectId, id);
@@ -57,6 +63,8 @@ export async function saveEdit(id: string, owner: string, command: EditRequest) 
     await tx.update(project).set({ revision, formatVersion: 2, timeline: change.timeline, updatedAt: new Date() }).where(owned(id, owner));
     await tx.insert(projectEdit).values({ projectId: id, revision, actorId: owner, command, requestId: command.requestId,
       forward: change.forward, inverse: change.inverse, affected: change.affected, targetRevision, state: command.kind === "edit" ? "applied" : null });
-    return { requestId: command.requestId, revision, affected: change.affected };
+    const receipt = { requestId: command.requestId, revision, affected: change.affected };
+    await hooks?.after?.(tx, receipt);
+    return receipt;
   });
 }
