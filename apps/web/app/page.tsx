@@ -5,6 +5,7 @@ import { Player, type PlayerRef } from "@remotion/player";
 import { Film } from "@editor/composition";
 import { earthrise as film } from "@editor/timeline";
 import { ExportButton } from "./export-button";
+import { Brand } from "./brand";
 
 function timecode(frame: number) {
   const seconds = Math.floor(frame / film.fps);
@@ -53,14 +54,14 @@ export default function Page() {
   return (
     <>
       <header className="topbar">
-        <div className="brand"><span className="mark" aria-hidden="true">◩</span>Cutroom</div>
+        <Brand />
         <span className="divider" aria-hidden="true">/</span><a className="workspace project-nav" href="/projects">My projects</a>
         <ExportButton />
       </header>
-      <main>
-        <div className="heading">
+      <main className="sample-workspace">
+        <div className="heading sample-heading">
           <div><p className="eyebrow">Apollo 8 <span> / </span> December 1968</p><h1>{film.name}</h1></div>
-          <span className="format">{film.width} × {film.height} <b>·</b> {film.fps} fps</span>
+          <div className="format"><span>00:10</span><b> / </b>{film.width} × {film.height}<b> / </b>{film.fps} fps</div>
         </div>
         <div className="desk">
           <section className="viewer" aria-label="Sequence preview">
@@ -78,7 +79,7 @@ export default function Page() {
             />
             <FrameControls player={player} />
           </section>
-          <aside>
+          <aside className="sample-notes">
             <section>
               <h2>Cue points</h2>
               <div className="cues">{cues.map((cue) => (

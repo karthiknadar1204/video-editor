@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Earthrise · Cutroom",
-  description: "Preview and export the Earthrise sequence.",
+  description: "A private video editing studio with frame-accurate cuts, live preview, and MP4 export.",
   icons: { icon: "/media/opening.jpg" },
 };
 

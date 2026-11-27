@@ -32,7 +32,7 @@ export function NewProject() {
   }
 
   return <>
-    <button className="action" onClick={() => dialog.current?.showModal()}>New project</button>
+    <button className="action" onClick={() => dialog.current?.showModal()}><span aria-hidden="true">+</span> New project</button>
     <dialog ref={dialog} aria-labelledby="new-project-title">
       <h2 id="new-project-title">New project</h2>
       <form onSubmit={create} className="stack">
