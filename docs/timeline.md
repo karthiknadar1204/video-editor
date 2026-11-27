@@ -29,4 +29,4 @@ Open tabs listen on `/api/projects/:id/events`. Hono checks the saved revision a
 
 ## Verification
 
-Run `bun run test:timeline` for the frame rules and inverse changes. Run `bun run test:migrations` for upgrades. With Postgres and Mailpit running, `E2E_PRODUCTION=1 bun run test` runs the authenticated API and browser tests against the production build. These cover concurrent writers, retrying a committed split after losing the response, decoded preview frames across undo and redo, grouped edits, cross-tab updates, and linked ripple edits with a locked track.
+Run `bun run test:timeline` for the frame rules and inverse changes. Run `bun run test:migrations` for upgrades. With the Neon test connections configured and Redis and Mailpit running locally, `E2E_PRODUCTION=1 bun run test` runs the authenticated API and browser tests against the production build. These cover concurrent writers, retrying a committed split after losing the response, decoded preview frames across undo and redo, grouped edits, cross-tab updates, and linked ripple edits with a locked track.
