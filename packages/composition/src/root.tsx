@@ -12,6 +12,9 @@ function Root() {
       height={earthrise.height}
       fps={earthrise.fps}
       durationInFrames={earthrise.durationInFrames}
+      calculateMetadata={({ props: { timeline } }) => ({
+        width: timeline.width, height: timeline.height, fps: timeline.fps, durationInFrames: timeline.durationInFrames,
+      })}
     />
   );
 }

@@ -7,6 +7,8 @@ import { appOrigin, auth } from "./auth";
 import { db } from "./db/client";
 import { project, session as sessions } from "./db/schema";
 import { getProject, HistoryError, saveEdit } from "./history";
+import { assets } from "./assets";
+import { projectExports } from "./project-export";
 
 const input = z.strictObject({ title: z.string().trim().min(1).max(120), format: z.enum(canvasFormats) });
 export const projects = new Hono<{ Variables: { ownerId: string; sessionId: string } }>();
@@ -17,15 +19,19 @@ projects.use("*", async (c, next) => {
   if (!session?.user.emailVerified) return c.json({ error: "Sign in to open your projects." }, 401);
   c.set("ownerId", session.user.id);
   c.set("sessionId", session.session.id);
-  if (c.req.method === "POST") {
+  if (["POST", "PUT", "DELETE"].includes(c.req.method)) {
     const origin = c.req.header("Origin");
     if ((origin && origin !== appOrigin) || c.req.header("Sec-Fetch-Site") === "cross-site") {
       return c.json({ error: "Open Cutroom to change a project." }, 403);
     }
-    if (c.req.header("Content-Type")?.split(";")[0] !== "application/json") return c.json({ error: "Expected JSON." }, 415);
+    if (c.req.method === "POST" && c.req.header("Content-Type")?.split(";")[0] !== "application/json") return c.json({ error: "Expected JSON." }, 415);
   }
   await next();
 });
+
+projects.route("/", assets);
+
+projects.route("/", projectExports);
 
 projects.get("/", async (c) => {
   const items = await db.select({ id: project.id, title: project.title, updatedAt: project.updatedAt })

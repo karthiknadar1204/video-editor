@@ -80,3 +80,15 @@ export const projectEdit = pgTable("project_edit", {
   createdAt: time("created_at").defaultNow().notNull(),
 }, t => [primaryKey({ columns: [t.projectId, t.revision] }), unique().on(t.projectId, t.requestId),
   index().on(t.projectId, t.state, t.revision)]);
+
+export const projectAsset = pgTable("project_asset", {
+  id: uuid().primaryKey(),
+  projectId: uuid("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
+  name: text().notNull(),
+  mime: text().notNull(),
+  size: integer().notNull(),
+  storage: text({ enum: ["local", "imagekit"] }).notNull(),
+  state: text({ enum: ["pending", "processing", "ready", "cancelled"] }).notNull(),
+  asset: jsonb().$type<Timeline["assets"][number]>(),
+  expiresAt: time("expires_at").notNull(),
+}, t => [index().on(t.projectId), index().on(t.state, t.expiresAt)]);

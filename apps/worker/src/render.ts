@@ -1,13 +1,16 @@
-import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { earthrise } from "@editor/timeline";
+import { earthrise, timelineSchema } from "@editor/timeline";
 import { bundle } from "@remotion/bundler";
 import { ensureBrowser, renderMedia, selectComposition } from "@remotion/renderer";
 import { exportFile, renderDir } from "../paths";
 
 async function render() {
   const browserExecutable = process.env.REMOTION_BROWSER_EXECUTABLE;
+  const job = process.env.CUTROOM_RENDER_JOB;
+  const timeline = job ? timelineSchema.parse(JSON.parse(await readFile(join(job, "timeline.json"), "utf8"))) : earthrise;
+  const inputProps = { timeline };
   await ensureBrowser({ browserExecutable, logLevel: "error" });
   await mkdir(renderDir, { recursive: true });
   const work = await mkdtemp(join(renderDir, "render-"));
@@ -17,10 +20,11 @@ async function render() {
       publicDir: fileURLToPath(new URL("../../web/public", import.meta.url)),
       outDir: join(work, "bundle"),
     });
-    const composition = await selectComposition({ serveUrl, id: earthrise.id, browserExecutable });
+    if (job) await cp(join(job, "assets"), join(serveUrl, "public", "imports"), { recursive: true });
+    const composition = await selectComposition({ serveUrl, id: earthrise.id, inputProps, browserExecutable });
     let lastPercent = -1;
     await renderMedia({
-      serveUrl, composition, browserExecutable,
+      serveUrl, composition, inputProps, browserExecutable,
       codec: "h264", audioCodec: "aac", pixelFormat: "yuv420p",
       concurrency: 2,
       outputLocation: join(work, "film.mp4"),
@@ -32,7 +36,7 @@ async function render() {
         }
       },
     });
-    await rename(join(work, "film.mp4"), exportFile);
+    await rename(join(work, "film.mp4"), job ? join(job, "output.mp4") : exportFile);
   } finally {
     await rm(work, { recursive: true, force: true });
   }

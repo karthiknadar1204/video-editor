@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
-import { applyPatch, editTimeline, readTimeline, type EditRequest } from "@editor/timeline";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { applyPatch, editLabel, editTimeline, readTimeline, type EditRequest } from "@editor/timeline";
+import { and, asc, desc, eq, lte, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import { project, projectEdit } from "./db/schema";
 
@@ -13,7 +13,12 @@ export async function getProject(id: string, owner: string) {
     id: project.id, title: project.title, timeline: project.timeline, formatVersion: project.formatVersion,
     revision: project.revision, canUndo: hasEntry("applied"), canRedo: hasEntry("undone"),
   }).from(project).where(owned(id, owner));
-  if (row) return { ...row, formatVersion: 2, timeline: readTimeline(row.formatVersion, row.timeline) };
+  if (!row) return;
+  const entries = await db.select({ revision: projectEdit.revision, command: projectEdit.command, affected: projectEdit.affected })
+    .from(projectEdit).where(and(eq(projectEdit.projectId, id), lte(projectEdit.revision, row.revision)))
+    .orderBy(desc(projectEdit.revision)).limit(12);
+  const history = entries.map(e => ({ revision: e.revision, label: editLabel(e.command), from: e.affected?.from ?? null }));
+  return { ...row, formatVersion: 2, timeline: readTimeline(row.formatVersion, row.timeline), history };
 }
 
 export class HistoryError extends Error {

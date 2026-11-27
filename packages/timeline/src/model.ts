@@ -26,6 +26,7 @@ export const assetSchema = z.object({
   metadata: z.object({
     mediaType: z.enum(["video", "audio"]), width: frame, height: frame, rotation: z.number(),
     hasAudio: z.boolean(), size: z.int().positive(), thumbnail: z.string().optional(),
+    audio: z.object({ codec: z.string(), channels: z.int().positive(), sampleRate: z.int().positive() }).optional(),
     transcript: z.enum(["not-started", "unavailable"]),
   }).optional(),
 });
@@ -68,8 +69,18 @@ export const editSchema = z.discriminatedUnion("kind", [
   z.strictObject({ ...request, kind: z.literal("redo") }),
 ]);
 export type EditRequest = z.infer<typeof editSchema>;
+export function editLabel(command: EditRequest) {
+  if (command.kind !== "edit") return command.kind === "undo" ? "Undo edit" : "Redo edit";
+  const names: Record<Change["type"], string> = {
+    add: "Insert clip", move: "Move clip", trim: "Trim clip", split: "Split clip", delete: "Delete clip",
+    rippleDelete: "Ripple delete", text: "Edit text", position: "Reposition clip", framing: "Frame shot",
+    textStyle: "Style text", volume: "Adjust volume", lock: "Change track lock", link: "Link clips",
+  };
+  return [...new Set(command.operations.map(op => names[op.type]))].join(" + ");
+}
 export const projectSnapshot = z.object({
   id: z.uuid(), title: z.string(), revision: frame, formatVersion: z.literal(2), timeline: timelineSchema,
   canUndo: z.boolean(), canRedo: z.boolean(),
+  history: z.array(z.object({ revision: frame, label: z.string(), from: frame.nullable() })).default([]),
 });
 export type ProjectSnapshot = z.infer<typeof projectSnapshot>;

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { streamText } from "hono/streaming";
-import { exportFile, workerDir } from "../../worker/paths";
+import { exportFile } from "../../worker/paths";
+import { renderSequence } from "./project-export";
 import { auth } from "./auth";
 import { projects } from "./projects";
 
@@ -18,13 +19,8 @@ app.post("/api/export", (c) => {
   return streamText(c, async (stream) => {
     try {
       await stream.writeln("Rendering");
-      const worker = Bun.spawn(["node", "--import", "tsx", "src/render.ts"], {
-        cwd: workerDir, stdout: "pipe", stderr: "inherit",
-        env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR,
-          REMOTION_BROWSER_EXECUTABLE: process.env.REMOTION_BROWSER_EXECUTABLE, CUTROOM_RENDER_DIR: process.env.CUTROOM_RENDER_DIR },
-      });
-      for await (const chunk of worker.stdout) await stream.write(chunk);
-      await stream.writeln((await worker.exited) === 0 ? "Ready" : "Failed");
+      await renderSequence(chunk => stream.write(chunk));
+      await stream.writeln("Ready");
     } catch (error) {
       console.error("Export failed", error);
       await stream.writeln("Failed");

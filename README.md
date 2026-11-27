@@ -4,7 +4,7 @@ A browser-based video editor built with Next.js, Hono, Bun, and Remotion. Edit f
 
 ## Run locally
 
-Use Bun 1.3.3, Node 22.19.0, and Docker Compose. On first setup, start PostgreSQL and the local mail inbox from the repository root.
+Use Bun 1.3.3, Node 22.19.0, Docker Compose, and FFmpeg 6 or later (including ffprobe). On first setup, start PostgreSQL and the local mail inbox from the repository root.
 
 ```sh
 bun install --frozen-lockfile
@@ -44,6 +44,10 @@ Next.js forwards `/api` to Hono on port 4000 in development and in the productio
 | `GET /api/projects/:id` | Read one saved timeline. Another owner’s ID returns 404. |
 | `POST /api/projects/:id/edits` | Save a group of timeline edits, undo, or redo against an expected revision. |
 | `GET /api/projects/:id/events` | Subscribe to saved revisions in the owner's open editor. |
+| `POST /api/projects/:id/assets` | Reserve a private upload and receive its destination and signed form fields. |
+| `POST` or `DELETE /api/projects/:id/assets/:assetId` | Verify and attach uploaded media, or cancel an unfinished upload. |
+| `GET /api/projects/:id/assets/:assetId/:kind` | Serve the owner's original, playback copy, or thumbnail. |
+| `POST` or `GET /api/projects/:id/export` | Render a saved revision or download its completed MP4. |
 | `POST /api/export` and `GET /api/export` | Render the public sample and download the completed MP4. |
 
 ## Commands
@@ -67,6 +71,18 @@ To use an existing installation of Google Chrome for the test, set `TEST_BROWSER
 The [timeline guide](docs/timeline.md) covers editing controls, frame rules, saving, and verification. See the [Phase 1 verification notes](docs/first-render.md) for the public sample and the [implementation plan](docs/implementation-plan.md) for later editing and agent milestones.
 
 ## Hosted configuration
+
+### Private media
+
+Local development uses `CUTROOM_MEDIA_STORAGE=local` and stores files under `.local/media` outside the web root. `CUTROOM_MEDIA_DIR` can point to another private directory. The API host needs `ffmpeg` and `ffprobe` on its PATH, with H.264 and AAC encoding support.
+
+For hosted uploads, set `CUTROOM_MEDIA_STORAGE=imagekit`, `IMAGEKIT_PUBLIC_KEY`, `IMAGEKIT_PRIVATE_KEY`, and `IMAGEKIT_URL_ENDPOINT` on the API server. Use an ImageKit key with access to upload, read, list, and remove files in the project's media folder. The browser receives a ten-minute grant bound to a server-selected path, file size, and privacy settings. Hono verifies the uploaded file ID and path, decodes the original, and stores a seekable playback copy and a thumbnail. Owner-authorized delivery links expire after five minutes. The original is retained byte-for-byte for export. Configure the account to restrict unsigned media delivery. [ImageKit private media settings](https://imagekit.io/docs/media-delivery-basic-security)
+
+Uploads support MP4, MOV, WebM, M4A, MP3, WAV, and Ogg, up to 64 MiB and one hour per asset. The provider's account limits also apply. Clips can use ready footage immediately. Transcript status records whether the file has audio suitable for later transcription. The API checks for abandoned uploads at startup and every fifteen minutes. Unfinished uploads expire after 24 hours.
+
+The local browser suite tests a rotated MOV with real video decoding and byte-range reads. With ImageKit credentials configured, run `E2E_LIVE_IMAGEKIT=1 bun --env-file=apps/api/.env.local run test tests/imagekit-live.spec.ts` to upload a short synthetic portrait recording and verify its original, private thumbnail, and playback.
+
+### Database and authentication
 
 The project uses separate Neon staging and production branches. Apply each migration to staging, verify it, then apply it to production. For each branch, give the migration job the direct `cutroom_owner` URL as `MIGRATION_DATABASE_URL`. Give the API the pooled `cutroom_app` URL as `DATABASE_URL`. The application role has table read/write access in `public`.
 
