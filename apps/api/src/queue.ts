@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Queue, QueueEvents } from "bullmq";
+import { Queue, QueueEvents, type JobsOptions } from "bullmq";
 import { z } from "zod";
 
 const projectId = z.uuid();
@@ -51,13 +51,8 @@ export function mediaJobId(input: MediaJob) {
   return data.kind + "-" + createHash("sha256").update(JSON.stringify(data)).digest("hex");
 }
 
-export async function enqueueMedia(data: MediaJob) {
-  const interactive = data.kind === "upload" || data.kind === "candidate";
-  const job = getMediaQueue().add(data.kind, data, {
-    jobId: mediaJobId(data),
-    // An HTTP waiter can subscribe just after a fast worker finishes.
-    ...(interactive && { removeOnComplete: { age: 120, count: 100 }, removeOnFail: true }),
-  });
+export async function addMedia(data: MediaJob, options: JobsOptions) {
+  const job = getMediaQueue().add(data.kind, data, options);
   // Redis may reconnect indefinitely. The durable request can be recovered after the API returns.
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -67,6 +62,15 @@ export async function enqueueMedia(data: MediaJob) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function enqueueMedia(data: MediaJob) {
+  const interactive = data.kind === "upload" || data.kind === "candidate";
+  return addMedia(data, {
+    jobId: mediaJobId(data),
+    // An HTTP waiter can subscribe just after a fast worker finishes.
+    ...(interactive && { removeOnComplete: { age: 120, count: 100 }, removeOnFail: true }),
+  });
 }
 
 async function sendToWorker(data: MediaJob) {

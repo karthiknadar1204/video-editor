@@ -1,18 +1,19 @@
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { readTimeline, rushes, sample } from "@editor/timeline";
-import { and, asc, count, desc, eq, gt, inArray, isNotNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { projectExportDir } from "../../worker/paths";
 import { takeAllowance } from "./allowance";
 import { db } from "./db/client";
 import { exportAttempt, exportSource, exportVersion, type ExportManifest } from "./db/export-schema";
 import { project, projectAsset } from "./db/schema";
-import { pinRelease, pinnedBundle } from "./export-release";
+import { currentExportRelease, pinnedBundle } from "./export-release";
+import { enqueueMedia } from "./queue";
 import { forgetOutput, publishOutput } from "./export-storage";
 import type { EditTransaction } from "./history";
 import { storageMode } from "./media-storage";
-import { MissingSource, prepareProject, renderSequence } from "./project-render";
+import { MissingSource, prepareProject, renderProgress, renderSequence } from "./project-render";
 
 export class ExportError extends Error {
   constructor(readonly status: 400 | 404 | 409 | 422 | 429 | 503, message: string) { super(message); }
@@ -20,7 +21,6 @@ export class ExportError extends Error {
 type Owner = { ownerId: string; projectId: string };
 type Target = Owner & { exportId: string };
 type Attempt = typeof exportAttempt.$inferSelect;
-const leaseMs = 45_000;
 const retentionMs = 30 * 86_400_000;
 const activeStates = ["queued", "rendering", "uploading"] satisfies Attempt["status"][];
 const renderingStates = ["rendering", "uploading"] satisfies Attempt["status"][];
@@ -67,7 +67,7 @@ async function admit(tx: EditTransaction, ownerId: string) {
 export async function startExport(input: Owner & { revision: number }, before?: (tx: EditTransaction) => Promise<void>) {
   await requireOwner(input);
   if (!Number.isSafeInteger(input.revision) || input.revision < 0) throw new ExportError(422, "Choose a saved revision.");
-  const release = await pinRelease();
+  const release = await currentExportRelease();
   const id = await db.transaction(async tx => {
     await before?.(tx);
     const [p] = await tx.select().from(project).where(and(eq(project.id, input.projectId), eq(project.ownerId, input.ownerId))).for("update");
@@ -97,8 +97,7 @@ export async function startExport(input: Owner & { revision: number }, before?: 
     await tx.insert(exportAttempt).values({ exportId: id, number: 1 });
     return id;
   });
-  wakeExportWorker();
-  return getExport({ ...input, exportId: id });
+  return dispatchIfQueued(await getExport({ ...input, exportId: id }));
 }
 
 async function lockVersion(tx: EditTransaction, target: Target) {
@@ -123,9 +122,8 @@ export async function changeAttempt(target: Target, action: "retry" | "cancel", 
     await tx.insert(exportAttempt).values({ exportId: v.id, number: v.attempt + 1 });
     await tx.update(exportVersion).set({ attempt: v.attempt + 1, expiresAt: new Date(Date.now() + retentionMs) }).where(eq(exportVersion.id, v.id));
   });
-  if (action === "cancel") controllers.get(target.exportId + "/" + expected)?.abort();
-  wakeExportWorker();
-  return getExport(target);
+  const row = await getExport(target);
+  return action === "retry" ? dispatchIfQueued(row) : row;
 }
 
 export async function changeShare(target: Target, shared: boolean) {
@@ -154,73 +152,68 @@ export async function completedVersion(target: Target | { token: string } | (Own
   return row;
 }
 
-async function claimNext() {
+async function dispatchIfQueued(row: Awaited<ReturnType<typeof getExport>>) {
+  if (row.status === "queued") {
+    try { await enqueueMedia({ kind: "export", exportId: row.id, attempt: row.attempt }); }
+    catch { console.error("Saved export is waiting for queue reconciliation."); }
+  }
+  return row;
+}
+
+const leaseDeadline = sql`now() + interval '45 seconds'`;
+const alive = gt(exportAttempt.leaseUntil, sql`now()`);
+async function claimExport(id: string, number: number) {
   return db.transaction(async tx => {
-    const now = new Date();
-    const [v] = await tx.select({ version: exportVersion, previous: exportAttempt }).from(exportVersion).innerJoin(exportAttempt, currentAttempt)
-      .where(and(gt(exportVersion.expiresAt, now), or(eq(exportAttempt.status, "queued"), and(inArray(exportAttempt.status, renderingStates),
-        lt(exportAttempt.leaseUntil, now))))).orderBy(asc(exportAttempt.createdAt)).limit(1).for("update", { skipLocked: true });
+    const [v] = await tx.select({ version: exportVersion }).from(exportVersion).innerJoin(exportAttempt, currentAttempt)
+      .where(and(identity(id, number), gt(exportVersion.expiresAt, sql`now()`), eq(exportAttempt.status, "queued"))).for("update");
     if (!v) return;
-    let number = v.previous.number;
-    if (v.previous.status !== "queued") {
-      await tx.update(exportAttempt).set({ status: "failed", endedAt: now, leaseUntil: null, error: "The render worker was interrupted." })
-        .where(identity(v.version.id, number));
-      if (number >= 3) return { kind: "recovered" as const };
-      number++;
-      await tx.insert(exportAttempt).values({ exportId: v.version.id, number });
-      await tx.update(exportVersion).set({ attempt: number }).where(eq(exportVersion.id, v.version.id));
-    }
     const claim = crypto.randomUUID();
-    await tx.update(exportAttempt).set({ status: "rendering", claim, leaseUntil: new Date(Date.now() + leaseMs) }).where(identity(v.version.id, number));
-    return { kind: "job" as const, version: v.version, number, claim };
+    await tx.update(exportAttempt).set({ status: "rendering", claim, leaseUntil: leaseDeadline }).where(identity(id, number));
+    return { version: v.version, claim };
   });
 }
 
-const controllers = new Map<string, AbortController>();
-async function runNext() {
-  const job = await claimNext();
-  if (!job) return false;
-  if (job.kind === "recovered") return true;
-  const { version: v, number, claim } = job;
-  const key = v.id + "/" + number, controller = new AbortController();
-  controllers.set(key, controller);
-  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(20 * 60_000)]);
-  const mine = and(identity(v.id, number), eq(exportAttempt.claim, claim), inArray(exportAttempt.status, renderingStates));
+export async function processExport(id: string, number: number, workerSignal?: AbortSignal) {
+  workerSignal?.throwIfAborted();
+  const job = await claimExport(id, number);
+  if (!job) return;
+  const { version: v, claim } = job;
+  const controller = new AbortController();
+  const signals = [controller.signal, AbortSignal.timeout(20 * 60_000)];
+  if (workerSignal) signals.push(workerSignal);
+  const signal = AbortSignal.any(signals);
+  const claimed = and(identity(id, number), eq(exportAttempt.claim, claim), inArray(exportAttempt.status, renderingStates));
+  const mine = and(claimed, alive);
   const beat = setInterval(() => {
-    void db.update(exportAttempt).set({ leaseUntil: new Date(Date.now() + leaseMs) }).where(mine).returning({ n: exportAttempt.number })
+    void db.update(exportAttempt).set({ leaseUntil: leaseDeadline }).where(mine).returning({ n: exportAttempt.number })
       .then(rows => { if (!rows.length) controller.abort(); }).catch(() => controller.abort());
-  }, 8_000);
+  }, 4_000);
   const directory = workDir(v.projectId, claim);
   let publishing = false;
   try {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const bundle = await pinnedBundle(v.release);
     await prepareProject(directory, v.projectId, v.timeline, signal);
-    let pending = "", progress = 0;
-    await renderSequence(async chunk => {
-      const lines = (pending + new TextDecoder().decode(chunk)).split("\n");
-      pending = lines.pop() ?? "";
-      const seen = Math.max(progress, ...lines.filter(l => /^\d{1,3}$/.test(l)).map(Number));
-      if (seen >= progress + 5) {
-        progress = Math.min(99, seen);
-        await db.update(exportAttempt).set({ progress }).where(mine);
-      }
-    }, directory, { bundle, signal });
+    await renderSequence(renderProgress(async progress => {
+      await db.update(exportAttempt).set({ progress }).where(mine);
+    }), directory, { bundle, signal });
     const uploading = await db.update(exportAttempt).set({ status: "uploading", progress: 99 }).where(mine).returning({ n: exportAttempt.number });
-    if (!uploading.length) return true;
+    if (!uploading.length) return;
     publishing = true;
     const remoteId = await publishOutput(v, number, join(directory, "output.mp4"), signal);
     await db.update(exportAttempt).set({ status: "completed", remoteId, progress: 100, endedAt: new Date(), leaseUntil: null }).where(mine);
   } catch (error) {
+    if (workerSignal?.aborted) {
+      await db.update(exportAttempt).set({ leaseUntil: sql`now()` }).where(claimed);
+      throw error;
+    }
     const message = error instanceof MissingSource ? error.message : signal.aborted ? "The export was interrupted. Retry the saved version." :
       publishing ? "The MP4 was rendered. Publishing it failed. Retry the export." : "The worker could not render this version. Retry the export.";
     await db.update(exportAttempt).set({ status: "failed", error: message, endedAt: new Date(), leaseUntil: null }).where(mine);
   } finally {
     clearInterval(beat);
-    controllers.delete(key);
     await rm(directory, { recursive: true, force: true });
   }
-  return true;
 }
 
 let abandonedOffset = 0, expiredOffset = 0;
@@ -254,18 +247,24 @@ async function collectExpired() {
   expiredOffset = expired.length === 8 ? expiredOffset + deferred : 0;
   if (missed || deferred) console.error("Some export files were unavailable for cleanup. Retention will retry.");
 }
-let busy = false, pending = false, nextCleanup = 0;
-let timer: ReturnType<typeof setInterval> | undefined;
-export function wakeExportWorker() {
-  if (!timer) { timer = setInterval(wakeExportWorker, 10_000); timer.unref(); }
-  pending = true;
-  if (busy) return;
-  busy = true;
-  void (async () => {
-    try {
-      do { pending = false; if (await runNext()) pending = true; } while (pending);
-      if (Date.now() >= nextCleanup) { nextCleanup = Date.now() + 60_000; await collectExpired(); }
-    } catch { console.error("Export worker will retry."); }
-    finally { busy = false; if (pending) queueMicrotask(wakeExportWorker); }
-  })();
+
+export async function reconcileExports() {
+  await db.transaction(async tx => {
+    const expired = await tx.select({ id: exportVersion.id, number: exportAttempt.number }).from(exportVersion)
+      .innerJoin(exportAttempt, currentAttempt).where(and(gt(exportVersion.expiresAt, sql`now()`), inArray(exportAttempt.status, renderingStates),
+        sql`(${exportAttempt.leaseUntil} IS NULL OR ${exportAttempt.leaseUntil} <= now())`))
+      .orderBy(asc(exportAttempt.createdAt)).limit(32).for("update", { skipLocked: true });
+    for (const { id, number } of expired) {
+      await tx.update(exportAttempt).set({ status: "failed", endedAt: sql`now()`, leaseUntil: null, error: "The render worker was interrupted." })
+        .where(identity(id, number));
+      if (number >= 3) continue;
+      await tx.insert(exportAttempt).values({ exportId: id, number: number + 1 });
+      await tx.update(exportVersion).set({ attempt: number + 1 }).where(eq(exportVersion.id, id));
+    }
+  });
+  const queued = await db.select({ exportId: exportVersion.id, attempt: exportAttempt.number }).from(exportVersion)
+    .innerJoin(exportAttempt, currentAttempt).where(and(gt(exportVersion.expiresAt, sql`now()`), eq(exportAttempt.status, "queued")))
+    .orderBy(asc(exportAttempt.createdAt)).limit(32);
+  await Promise.all(queued.map(row => enqueueMedia({ kind: "export", ...row })));
+  await collectExpired();
 }

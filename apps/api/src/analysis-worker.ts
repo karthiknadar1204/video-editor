@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { rushes, sample, readTimeline } from "@editor/timeline";
 import { and, asc, eq, or, sql } from "drizzle-orm";
-import { analysisVersion, makeSourceSheet, transcribeSource } from "../../worker/src/analysis";
+import { analysisVersion } from "../../worker/whisper";
+import { enqueueMedia } from "./queue";
 import { db } from "./db/client";
 import { project, projectAsset, sourceAnalysis as jobs } from "./db/schema";
 import { originalName } from "./media";
@@ -15,18 +16,16 @@ export const jobKey = (projectId: string, assetId: string) => and(eq(jobs.projec
 const available = () => or(eq(jobs.status, "queued"), and(eq(jobs.status, "processing"), sql`${jobs.leaseUntil} < now()`));
 const lease = sql`now() + interval '2 minutes'`;
 
-async function claim() {
-  return db.transaction(async tx => {
-    const [next] = await tx.select({ projectId: jobs.projectId, assetId: jobs.assetId }).from(jobs)
-      .where(and(eq(jobs.version, analysisVersion), available())).orderBy(asc(jobs.createdAt)).limit(1).for("update", { skipLocked: true });
-    if (!next) return;
-    const [claimed] = await tx.update(jobs).set({ status: "processing", leaseId: crypto.randomUUID(), leaseUntil: lease })
-      .where(jobKey(next.projectId, next.assetId)).returning();
-    return claimed;
-  });
+export async function recoverAnalysisJobs() {
+  const pending = await db.select({ projectId: jobs.projectId, assetId: jobs.assetId }).from(jobs)
+    .where(and(eq(jobs.version, analysisVersion), available())).orderBy(asc(jobs.createdAt)).limit(100);
+  await Promise.all(pending.map(row => enqueueMedia({ kind: "analysis", ...row })));
 }
 
-async function processJob(job: typeof jobs.$inferSelect) {
+export async function processAnalysisJob(projectId: string, assetId: string) {
+  const [job] = await db.update(jobs).set({ status: "processing", leaseId: crypto.randomUUID(), leaseUntil: lease })
+    .where(and(jobKey(projectId, assetId), available())).returning();
+  if (!job) return;
   const held = and(jobKey(job.projectId, job.assetId), eq(jobs.leaseId, job.leaseId!));
   const heartbeat = setInterval(() => { void db.update(jobs).set({ leaseUntil: lease }).where(held).catch(() => {}); }, 30_000);
   let folder: string | undefined;
@@ -47,6 +46,7 @@ async function processJob(job: typeof jobs.$inferSelect) {
       path = join(folder, originalName(row.mime));
       await stageOriginal(row, path);
     }
+    const { makeSourceSheet, transcribeSource } = await import("../../worker/src/analysis");
     const durationMs = Math.round(asset.duration * 1000 / timeline.fps);
     // Keep successful parts across retries, including an empty transcript or audio-only sheet.
     const results = await Promise.allSettled([
@@ -69,13 +69,4 @@ async function processJob(job: typeof jobs.$inferSelect) {
     clearInterval(heartbeat);
     if (folder) await rm(folder, { recursive: true, force: true });
   }
-}
-
-let running = false;
-export function wakeAnalysisWorker() {
-  if (running) return;
-  running = true;
-  void (async () => {
-    for (let job = await claim(); job; job = await claim()) await processJob(job);
-  })().catch(() => console.error("Source analysis worker will retry.")).finally(() => { running = false; });
 }

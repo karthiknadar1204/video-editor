@@ -31,7 +31,7 @@ async function fingerprint() {
   return { id: digest(JSON.stringify(files)), fonts, media, engine: digest(files["apps/worker/src/render.ts"] + files["apps/worker/package.json"]) };
 }
 let current: ReturnType<typeof fingerprint> | undefined;
-const currentRelease = () => current ??= fingerprint().catch(error => { current = undefined; throw error; });
+export const currentExportRelease = () => current ??= fingerprint().catch(error => { current = undefined; throw error; });
 let freezing: Promise<void> | undefined;
 
 async function freeze(id: string, engine: string) {
@@ -46,14 +46,14 @@ async function freeze(id: string, engine: string) {
     catch (error) { if (!await Bun.file(join(target, "engine")).exists()) throw error; }
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }
-export async function pinRelease() {
-  const release = await currentRelease();
+export async function prepareExportRelease() {
+  const release = await currentExportRelease();
   await (freezing ??= freeze(release.id, release.engine).finally(() => { freezing = undefined; }));
   return release;
 }
 export async function pinnedBundle(id: string) {
-  const release = await currentRelease();
-  if (release.id === id) await pinRelease();
+  const release = await currentExportRelease();
+  if (release.id === id) await prepareExportRelease();
   const engine = await Bun.file(join(releaseDir(id), "engine")).text();
   if (engine !== release.engine) throw new Error("This export needs its original render worker.");
   return join(releaseDir(id), "bundle");

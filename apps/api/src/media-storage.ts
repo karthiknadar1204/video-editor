@@ -1,11 +1,11 @@
 import { createHmac } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
-import { mkdir, mkdtemp, open, link, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, open, link, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import ImageKit from "@imagekit/nodejs";
+import ImageKit, { NotFoundError } from "@imagekit/nodejs";
 import type { projectAsset } from "./db/schema";
 import { MediaError, originalName, prepareMedia } from "./media";
 
@@ -81,7 +81,8 @@ function signedURL(row: Upload, file: string) {
 
 export async function processUpload(row: Upload, fileId: string | undefined, base: string, fps: number) {
   const remote = row.storage === "imagekit";
-  const folder = remote ? await mkdtemp(join(tmpdir(), "cutroom-ingest-")) : localFolder(row);
+  if (!remote && !await Bun.file(join(localFolder(row), originalName(row.mime))).exists()) throw new MediaError("Upload the file before attaching it.", 422);
+  const folder = await mkdtemp(remote ? join(tmpdir(), "cutroom-ingest-") : join(localFolder(row), ".ingest-"));
   try {
     const client = remote ? new ImageKit({ privateKey: imageKitCredentials().privateKey, maxRetries: 1, timeout: 60_000 }) : null;
     if (client) {
@@ -93,16 +94,16 @@ export async function processUpload(row: Upload, fileId: string | undefined, bas
       if (!source.ok) throw new MediaError("Could not retrieve the private original.", 503);
       await writeOriginal(source.body, row, folder);
     }
-    if (!await Bun.file(join(folder, originalName(row.mime))).exists()) throw new MediaError("Upload the file before attaching it.", 422);
+    else await link(join(localFolder(row), originalName(row.mime)), join(folder, originalName(row.mime)));
     const result = await prepareMedia(folder, row.mime, row.size, base, fps);
-    if (client) {
-      for (const fileName of result.metadata.thumbnail ? ["playback.mp4", "thumbnail.jpg"] : ["playback.mp4"]) {
+    for (const fileName of result.metadata.thumbnail ? ["playback.mp4", "thumbnail.jpg"] : ["playback.mp4"]) {
+      if (client) {
         await client.files.upload({ folder: remoteFolder(row), fileName, file: Bun.file(join(folder, fileName)),
           isPrivateFile: true, useUniqueFileName: false, overwriteFile: true });
-      }
+      } else await rename(join(folder, fileName), join(localFolder(row), fileName));
     }
     return { ...result, id: row.id, name: row.name, src: base + "/playback" };
-  } finally { if (remote) await rm(folder, { recursive: true, force: true }); }
+  } finally { await rm(folder, { recursive: true, force: true }); }
 }
 
 export async function removeAbandoned(row: Upload) {
@@ -110,7 +111,10 @@ export async function removeAbandoned(row: Upload) {
   const client = new ImageKit({ privateKey: imageKitCredentials().privateKey, maxRetries: 1 });
   const path = remoteFolder(row);
   for (const file of await client.assets.list({ type: "file", path: path + "/" })) {
-    if (file.fileId && file.filePath?.startsWith(path + "/")) await client.files.delete(file.fileId);
+    if (file.fileId && file.filePath?.startsWith(path + "/")) {
+      try { await client.files.delete(file.fileId); }
+      catch (error) { if (!(error instanceof NotFoundError)) throw error; }
+    }
   }
 }
 

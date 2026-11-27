@@ -1,9 +1,10 @@
 import { correctWord, lookupTranscript, mapSourceRange, parseSubtitles, readTimeline, type TranscriptMatch, type SourcePlacement, type WordCorrection } from "@editor/timeline";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { analysisVersion, jobKey, wakeAnalysisWorker } from "./analysis-worker";
+import { analysisVersion, jobKey } from "./analysis-worker";
 import { db } from "./db/client";
 import { project, sourceAnalysis as jobs, sourceTranscript as edits } from "./db/schema";
+import { enqueueMedia } from "./queue";
 import { MediaError } from "./media";
 
 type Access = { projectId: string; ownerId: string };
@@ -28,7 +29,7 @@ async function source(access: Access, assetId: string, image = false) {
   let [row] = await read();
   if (!row) {
     await db.insert(jobs).values({ projectId, assetId, version: analysisVersion }).onConflictDoNothing();
-    wakeAnalysisWorker();
+    await enqueueMedia({ kind: "analysis", projectId, assetId });
     [row] = await read();
     if (!row) return null;
   }
@@ -83,7 +84,7 @@ export async function updateTranscript(access: Access, assetId: string, update: 
 export async function retryAnalysis(access: Access, assetId: string) {
   if (!await source(access, assetId)) return false;
   await db.update(jobs).set({ status: "queued" }).where(and(jobKey(access.projectId, assetId), eq(jobs.status, "failed")));
-  wakeAnalysisWorker();
+  await enqueueMedia({ kind: "analysis", projectId: access.projectId, assetId });
   return true;
 }
 
@@ -105,7 +106,7 @@ export async function searchTranscripts(access: Access, input: SearchInput) {
     const missing = batch.filter(a => !rows.some(row => row.assetId === a.id));
     if (missing.length) {
       await db.insert(jobs).values(missing.map(a => ({ projectId: access.projectId, assetId: a.id, version: analysisVersion }))).onConflictDoNothing();
-      wakeAnalysisWorker();
+      await Promise.all(missing.map(a => enqueueMedia({ kind: "analysis", projectId: access.projectId, assetId: a.id })));
     }
     for (const asset of batch) {
       const row = rows.find(r => r.assetId === asset.id);

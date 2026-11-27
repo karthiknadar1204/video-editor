@@ -6,9 +6,9 @@ import { promisify } from "node:util";
 import { transcriptWordSchema, type TranscriptWord } from "@editor/timeline";
 import sharp, { type OverlayOptions } from "sharp";
 import { z } from "zod";
-import { cliPath, modelPath, whisper } from "../whisper";
+import { cliPath, modelPath } from "../whisper";
 
-export const analysisVersion = "whisper.cpp-" + whisper.version + "/base.en-" + whisper.modelHash.slice(0, 16) + "/sow-2/sheet-1";
+export { analysisVersion } from "../whisper";
 const exec = promisify(execFile);
 const localInput = ["-protocol_whitelist", "file", "-format_whitelist", "mov,matroska,webm,mp3,wav,ogg"];
 const mediaOptions = { env: { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR }, killSignal: "SIGKILL" as const };

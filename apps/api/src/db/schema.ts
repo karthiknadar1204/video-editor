@@ -1,5 +1,5 @@
 import type { Change, EditorContext, EditRequest, Patch, RoughCutOptions, RoughCutReceipt, RunActivity, RunView, Timeline, TranscriptWord } from "@editor/timeline";
-import { bigint, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { bigint, boolean, foreignKey, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 const time = (name: string) => timestamp(name, { withTimezone: true });
 const timestamps = () => ({
@@ -90,6 +90,8 @@ export const projectAsset = pgTable("project_asset", {
   storage: text({ enum: ["local", "imagekit"] }).notNull(),
   state: text({ enum: ["pending", "processing", "ready", "cancelled"] }).notNull(),
   asset: jsonb().$type<Timeline["assets"][number]>(),
+  uploadAttempt: uuid("upload_attempt"), uploadFileId: text("upload_file_id"),
+  uploadError: jsonb("upload_error").$type<{status:400|403|404|409|413|415|422|503; message:string}>(),
   expiresAt: time("expires_at").notNull(),
 }, t => [index().on(t.projectId), index().on(t.state, t.expiresAt)]);
 
@@ -160,3 +162,11 @@ export const roughCutReview = pgTable("rough_cut_review", {
   previewImage: jsonb("preview_image").$type<{ frame: number; data: string }>(),
   createdAt: time("created_at").defaultNow().notNull(),
 }, t => [primaryKey({ columns: [t.projectId, t.id] }), index().on(t.projectId, t.createdAt)]);
+
+
+export const candidateFrame = pgTable("candidate_frame", {
+  projectId: uuid("project_id").notNull(), reviewId: uuid("review_id").notNull(),
+  revision: integer().notNull(), frame: integer().notNull(), data: text(), failed: boolean().notNull().default(false),
+  createdAt: time("created_at").defaultNow().notNull(),
+}, t => [primaryKey({ columns: [t.projectId, t.reviewId, t.revision, t.frame] }),
+  foreignKey({ columns: [t.projectId, t.reviewId], foreignColumns: [roughCutReview.projectId, roughCutReview.id] }).onDelete("cascade")]);

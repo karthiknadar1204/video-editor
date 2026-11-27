@@ -10,13 +10,14 @@
     "db:generate": "bun run --cwd apps/api db:generate",
     "db:migrate": "bun run --cwd apps/api db:migrate",
     "dev": "bun --filter @editor/web --filter @editor/api --filter @editor/runner dev",
+    "worker": "bun run --cwd apps/api worker",
     "build": "bun run --cwd apps/web build",
     "start": "bun --filter @editor/web --filter @editor/api --filter @editor/runner start",
     "render": "bun run --cwd apps/worker render",
     "typecheck": "tsc --noEmit && bun run --cwd apps/web typecheck",
-    "test": "playwright test",
+    "test": "bun --env-file=.env.e2e.local run playwright test",
     "test:timeline": "bun test packages/timeline/test",
-    "test:migrations": "bun apps/api/test/migrations.ts"
+    "test:migrations": "bun --env-file=.env.e2e.local apps/api/test/migrations.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.60.0",

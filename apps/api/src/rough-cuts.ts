@@ -1,18 +1,16 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { editTimeline, prepareRoughCut, readTimeline, restorePassage, roughCutOptionsSchema, roughCutReceiptSchema,
   type RoughCutOptions, type Timeline, type TranscriptWord } from "@editor/timeline";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { analysisVersion, wakeAnalysisWorker } from "./analysis-worker";
+import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { analysisVersion } from "./analysis-worker";
 import { takeAllowance } from "./allowance";
 import { authorizeProjectAccess, selectionWasRemoved, type ProjectAccess } from "./codex-access";
 import { recordEdit } from "./codex-runs-store";
 import { db } from "./db/client";
-import { codexRun, project, projectEdit as history, roughCutReview as reviews, sourceAnalysis, sourceTranscript } from "./db/schema";
+import { candidateFrame, codexRun, project, projectEdit as history, roughCutReview as reviews, sourceAnalysis, sourceTranscript } from "./db/schema";
 import { HistoryError, saveEditInTransaction, type EditTransaction } from "./history";
-import { prepareProject, renderSequence } from "./project-export";
+import { renderFramePixels } from "./frames";
+import { enqueueMedia, requestCandidateFrame } from "./queue";
 
 type Owner = { ownerId: string; projectId: string };
 type Access = Owner | ProjectAccess;
@@ -34,7 +32,7 @@ async function prepareTransaction<T>(access: Access, work: (tx: EditTransaction)
       if (error.ids.length) await db.insert(sourceAnalysis).values(error.ids.map(assetId => ({
         projectId: access.projectId, assetId, version: analysisVersion,
       }))).onConflictDoNothing();
-      wakeAnalysisWorker();
+      await Promise.all(error.ids.map(assetId => enqueueMedia({ kind: "analysis", projectId: access.projectId, assetId })));
     }
     throw error;
   }
@@ -128,7 +126,7 @@ async function calculate(tx: EditTransaction, a: Access, timeline: Timeline, rev
       .leftJoin(sourceTranscript, and(eq(sourceAnalysis.projectId, sourceTranscript.projectId), eq(sourceAnalysis.assetId, sourceTranscript.assetId)))
       .where(and(eq(sourceAnalysis.projectId, a.projectId), eq(sourceAnalysis.version, analysisVersion), inArray(sourceAnalysis.assetId, ids)));
     const missing = ids.filter(id => !existing.some(row => row.id === id));
-    if (missing.length || existing.some(r => !r.words && r.status !== "failed")) throw new PendingSources(missing);
+    if (missing.length || existing.some(r => !r.words && r.status !== "failed")) throw new PendingSources([...missing, ...existing.filter(r => !r.words && r.status !== "failed").map(r => r.id)]);
     if (existing.some(r => !r.words && r.status === "failed")) throw new HistoryError(422, "Speech analysis failed. Retry it or import subtitles in the media library.");
     for (const r of existing) words[r.id] = r.words ?? [];
   }
@@ -174,6 +172,7 @@ export async function commitRoughCut(access: Access, id: string, expectedRevisio
       const plan = await calculate(tx, access, p.timeline, p.revision, row.options, id);
       [row] = await tx.update(reviews).set({ baseRevision: p.revision, before: p.timeline, operations: plan.operations,
         receipt: plan.receipt, previewImage: null }).where(key(access, id)).returning();
+      await tx.delete(candidateFrame).where(and(eq(candidateFrame.projectId, access.projectId), eq(candidateFrame.reviewId, id), sql`${candidateFrame.revision} <> ${p.revision}`));
       return { review: detail(row, log), receipt: null, rebased: true };
     }
     if (row.baseRevision !== expectedRevision) return { review: view, receipt: null, rebased: true };
@@ -225,33 +224,68 @@ export async function undoReview(access: Owner, id: string, expectedRevision: nu
   });
 }
 
-const rendering = new Map<string, Promise<string>>();
-export async function reviewFrame(access: Access, id: string, frame: number) {
-  const row = await scopedReview(db, access, id);
+type Candidate = { projectId: string; reviewId: string; revision: number; frame: number };
+const frameKey = (job: Candidate) => and(eq(candidateFrame.projectId, job.projectId), eq(candidateFrame.reviewId, job.reviewId),
+  eq(candidateFrame.revision, job.revision), eq(candidateFrame.frame, job.frame));
+
+function candidatePicture(row: Review, frame: number) {
   const after = row.operations.length ? editTimeline(row.before, row.operations).timeline : row.before;
   if (!Number.isInteger(frame) || frame < 0 || frame >= after.durationInFrames) throw new HistoryError(422, "Frame outside the candidate.");
-  const cacheKey = [access.projectId, id, row.baseRevision, frame].join("/");
-  let data = row.previewImage?.frame === frame ? row.previewImage.data : undefined;
+  return { ...after, clips: after.clips.filter(c => c.track !== "music" && c.track !== "speech" && c.start <= frame && c.start + c.duration > frame) };
+}
+
+async function readCandidate(tx: EditTransaction, access: Access, id: string) {
+  if ("kind" in access) await authorizeProjectAccess(tx, access);
+  await tx.select({ id: reviews.id }).from(reviews).where(key(access, id)).for("share");
+  return scopedReview(tx, access, id);
+}
+
+export async function reviewFrame(access: Access, id: string, frame: number) {
+  const job = await db.transaction(async tx => {
+    const row = await readCandidate(tx, access, id);
+    candidatePicture(row, frame);
+    const input = { projectId: access.projectId, reviewId: id, revision: row.baseRevision, frame };
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('cutroom.candidate.admission'))`);
+    const [existing] = await tx.select({ data: candidateFrame.data, failed: candidateFrame.failed }).from(candidateFrame).where(frameKey(input));
+    if (existing && !existing.failed) return { input, data: existing.data };
+    const [pending] = await tx.select({ n: count() }).from(candidateFrame).where(and(isNull(candidateFrame.data), eq(candidateFrame.failed, false)));
+    if (pending.n >= 2) throw new HistoryError(409, "Candidate previews are busy. Retry this frame shortly.");
+    if (existing) await tx.update(candidateFrame).set({ failed: false }).where(frameKey(input));
+    else await tx.insert(candidateFrame).values(input);
+    await takeAllowance(access.ownerId, "render", tx);
+    return { input, data: null };
+  });
+  let data = job.data;
   if (!data) {
-    let pending = rendering.get(cacheKey);
-    if (!pending) {
-      if (rendering.size >= 2) throw new HistoryError(409, "Candidate previews are busy. Retry this frame shortly.");
-      pending = (async () => {
-        await takeAllowance(access.ownerId, "render");
-        const dir = await mkdtemp(join(tmpdir(), "cutroom-review-"));
-        try {
-          const signal = AbortSignal.timeout(120_000);
-          const picture = { ...after, clips: after.clips.filter(c => c.track !== "music" && c.track !== "speech" && c.start <= frame && c.start + c.duration > frame) };
-          await prepareProject(dir, access.projectId, picture, signal);
-          await renderSequence(async () => {}, dir, { frame, signal });
-          const jpeg = (await readFile(join(dir, "frame.jpg"))).toString("base64");
-          await db.update(reviews).set({ previewImage: { frame, data: jpeg } }).where(and(key(access, id), eq(reviews.baseRevision, row.baseRevision)));
-          return jpeg;
-        } finally { await rm(dir, { recursive: true, force: true }); }
-      })().finally(() => rendering.delete(cacheKey));
-      rendering.set(cacheKey, pending);
-    }
-    data = await pending;
+    await requestCandidateFrame(job.input).catch(() => {});
+    data = await db.transaction(async tx => {
+      const current = await readCandidate(tx, access, id);
+      if (current.baseRevision !== job.input.revision) throw new HistoryError(409, "The candidate changed. Inspect it again.");
+      const [cached] = await tx.select({ jpeg: candidateFrame.data, failed: candidateFrame.failed }).from(candidateFrame).where(frameKey(job.input));
+      if (!cached?.jpeg) {
+        if (cached?.failed) throw new HistoryError(422, "Could not render this candidate frame.");
+        throw new HistoryError(409, "Candidate preview is still queued. Retry this frame shortly.");
+      }
+      return cached.jpeg;
+    });
   }
-  return { kind: "rough_cut_candidate" as const, reviewId: id, baseRevision: row.baseRevision, frame, mimeType: "image/jpeg" as const, data };
+  return { kind: "rough_cut_candidate" as const, reviewId: id, baseRevision: job.input.revision, frame, mimeType: "image/jpeg" as const, data };
+}
+
+export async function processCandidateFrame(job: Candidate, finalAttempt = true) {
+  const pending = and(frameKey(job), isNull(candidateFrame.data), eq(candidateFrame.failed, false));
+  const [entry] = await db.select({ id: candidateFrame.reviewId }).from(candidateFrame).where(pending);
+  if (!entry) return;
+  const [owner] = await db.select({ ownerId: project.ownerId }).from(project).where(eq(project.id, job.projectId));
+  if (!owner) return;
+  let jpeg: string;
+  try {
+    const row = await scopedReview(db, { ownerId: owner.ownerId, projectId: job.projectId }, job.reviewId);
+    if (row.baseRevision !== job.revision) throw new HistoryError(409, "The candidate changed.");
+    jpeg = await renderFramePixels(job.projectId, candidatePicture(row, job.frame), job.frame);
+  } catch {
+    if (finalAttempt) await db.update(candidateFrame).set({ failed: true }).where(pending);
+    throw new Error("Could not render this candidate frame.");
+  }
+  await db.update(candidateFrame).set({ data: jpeg }).where(pending);
 }

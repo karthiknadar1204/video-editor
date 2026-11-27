@@ -10,6 +10,21 @@ import { originalName } from "./media";
 import { stageOriginal } from "./media-storage";
 
 export class MissingSource extends Error {}
+
+export function renderProgress(update: (percent: number) => void | Promise<void>) {
+  const decoder = new TextDecoder();
+  let pending = "", last = 0;
+  return async (chunk: Uint8Array) => {
+    const lines = (pending + decoder.decode(chunk, { stream: true })).split("\n");
+    pending = lines.pop() ?? "";
+    const percent = Math.min(99, Math.max(last, ...lines.filter(line => /^\d{1,3}$/.test(line)).map(Number)));
+    if (percent >= last + 5) {
+      last = percent;
+      await update(percent);
+    }
+  };
+}
+
 export async function renderSequence(write: (chunk: Uint8Array) => Promise<unknown>, job?: string, options?: { frame?: number; signal?: AbortSignal; bundle?: string; freeze?: string }) {
   const worker = Bun.spawn(["node", "--import", "tsx", "src/render.ts"], {
     cwd: workerDir, stdout: "pipe", stderr: "inherit", signal: options?.signal, killSignal: "SIGKILL",

@@ -72,7 +72,7 @@ export async function prepareMedia(folder: string, mime: string, size: number, b
     return { duration: Math.max(1, Math.floor(info.format.duration * fps + 0.00001)), metadata };
   } catch (error) {
     if (error instanceof MediaError) throw error;
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") throw new MediaError("Media processing is unavailable. Install ffmpeg and ffprobe on the API host.", 503);
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") throw new MediaError("Media processing is unavailable. Install ffmpeg and ffprobe on the media worker.", 503);
     throw new MediaError("Could not decode this recording. Choose a supported file of up to one hour.", 422);
   }
 }

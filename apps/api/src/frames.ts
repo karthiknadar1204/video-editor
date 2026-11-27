@@ -1,20 +1,22 @@
-import { mkdir, mkdtemp, readFile, rm, rmdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readTimeline } from "@editor/timeline";
-import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
+import { readTimeline, type Timeline } from "@editor/timeline";
+import { and, asc, count, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
-import { projectExportDir } from "../../worker/paths";
+import { enqueueMedia } from "./queue";
 import { takeAllowance } from "./allowance";
 import { db } from "./db/client";
-import { frameJob, project } from "./db/schema";
+import { candidateFrame, frameJob, project } from "./db/schema";
 import type { EditTransaction } from "./history";
-import { prepareProject, renderSequence } from "./project-export";
+import { prepareProject, renderSequence } from "./project-render";
 
 const maxPending = 16;
 const renderTimeoutMs = 120_000;
+const staleFrameMs = renderTimeoutMs + 15_000;
 const receipt = {
   jobId: frameJob.id, revision: frameJob.revision, frame: frameJob.frame, fps: frameJob.fps,
-  status: frameJob.status, data: frameJob.data, error: frameJob.error,
+  status: frameJob.status, data: frameJob.data, error: frameJob.error, updatedAt: frameJob.updatedAt,
 };
 
 export class FrameError extends Error {
@@ -52,68 +54,44 @@ export async function requestFrame(input: { ownerId: string; projectId: string; 
   const meta = { jobId: saved.jobId, frame: saved.frame, revision: saved.revision, timestampMs: Math.round(saved.frame * 1000 / saved.fps) };
   if (saved.status === "ready" && saved.data) return { ...meta, status: "ready" as const, mimeType: "image/jpeg" as const, data: saved.data };
   if (saved.status === "failed" || saved.status === "ready") return { ...meta, status: "failed" as const, error: saved.error ?? "Could not render the saved frame." };
-  wakeFrameWorker();
+  if (saved.status === "queued" || saved.updatedAt.getTime() + staleFrameMs <= Date.now()) await enqueueMedia({ kind: "frame", jobId: saved.jobId });
   return { ...meta, status: saved.status };
 }
 
-async function renderNext() {
-  return db.transaction(async tx => {
-    // A transaction lock is released on process death, including behind Neon's transaction pooler.
-    const [lock] = await tx.execute<{ held: boolean }>(sql`select pg_try_advisory_xact_lock(hashtext('cutroom.frame.renderer')) as held`);
-    if (!lock.held) return "busy";
-    const [job] = await tx.select({ id: frameJob.id, projectId: frameJob.projectId, frame: frameJob.frame, timeline: frameJob.timeline }).from(frameJob)
-      .where(inArray(frameJob.status, ["queued", "running"])).orderBy(asc(frameJob.createdAt), asc(frameJob.id)).limit(1);
-    if (!job) return "idle";
-    const row = eq(frameJob.id, job.id);
-    // Publish progress on a separate connection while the worker holds the renderer lock.
-    await db.update(frameJob).set({ status: "running", updatedAt: new Date() }).where(row);
-    const work = join(projectExportDir(job.projectId), "frames", job.id);
-    let directory: string | undefined;
-    try {
-      if (!job.timeline) throw new Error("Missing frame snapshot.");
-      await rm(work, { recursive: true, force: true });
-      await mkdir(work, { recursive: true, mode: 0o700 });
-      directory = await mkdtemp(join(work, "attempt-"));
-      const signal = AbortSignal.timeout(renderTimeoutMs);
-      await prepareProject(directory, job.projectId, job.timeline, signal);
-      await renderSequence(async () => {}, directory, { frame: job.frame, signal });
-      const jpeg = await readFile(join(directory, "frame.jpg"));
-      await tx.update(frameJob).set({ status: "ready", data: jpeg.toString("base64"), timeline: null, updatedAt: new Date() }).where(row);
-    } catch {
-      await tx.update(frameJob).set({ status: "failed", timeline: null, error: "Could not render the saved frame.", updatedAt: new Date() }).where(row);
-    } finally {
-      if (directory) await rm(directory, { recursive: true, force: true });
-      // Another attempt may own this directory after a lost database connection.
-      await rmdir(work).catch(() => {});
-    }
-    return "rendered";
-  });
+const runnable = () => or(eq(frameJob.status, "queued"), and(eq(frameJob.status, "running"), sql`${frameJob.updatedAt} < now() - ${staleFrameMs} * interval '1 millisecond'`));
+
+export async function recoverFrameJobs() {
+  const [frames, candidates] = await Promise.all([
+    db.select({ jobId: frameJob.id }).from(frameJob).where(runnable()).orderBy(asc(frameJob.createdAt)).limit(maxPending),
+    db.select({ projectId: candidateFrame.projectId, reviewId: candidateFrame.reviewId, revision: candidateFrame.revision, frame: candidateFrame.frame })
+      .from(candidateFrame).where(and(isNull(candidateFrame.data), eq(candidateFrame.failed, false))).orderBy(asc(candidateFrame.createdAt)).limit(maxPending),
+  ]);
+  await Promise.all([...frames.map(row => enqueueMedia({ kind: "frame", ...row })), ...candidates.map(row => enqueueMedia({ kind: "candidate", ...row }))]);
 }
 
-let draining = false;
-let pending = false;
-let retryTimer: ReturnType<typeof setTimeout> | undefined;
-
-export function wakeFrameWorker() {
-  pending = true;
-  if (draining || retryTimer) return;
-  draining = true;
-  void (async () => {
-    try {
-      do {
-        pending = false;
-        const result = await renderNext();
-        if (result === "rendered") pending = true;
-        if (result === "busy") { scheduleRetry(); break; }
-      } while (pending);
-    } catch {
-      scheduleRetry();
-    } finally { draining = false; }
-  })();
+export async function renderFramePixels(projectId: string, timeline: Timeline, frame: number) {
+  const dir = await mkdtemp(join(tmpdir(), "cutroom-still-"));
+  try {
+    const signal = AbortSignal.timeout(renderTimeoutMs);
+    await prepareProject(dir, projectId, timeline, signal);
+    await renderSequence(async () => {}, dir, { frame, signal });
+    return (await readFile(join(dir, "frame.jpg"))).toString("base64");
+  } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
-function scheduleRetry() {
-  if (retryTimer) return;
-  retryTimer = setTimeout(() => { retryTimer = undefined; wakeFrameWorker(); }, 3000);
-  retryTimer.unref();
+export async function processFrameJob(jobId: string) {
+  const claimedAt = new Date();
+  const [job] = await db.update(frameJob).set({ status: "running", updatedAt: claimedAt })
+    .where(and(eq(frameJob.id, jobId), runnable())).returning({ timeline: frameJob.timeline, frame: frameJob.frame, projectId: frameJob.projectId });
+  if (!job) return;
+  const mine = and(eq(frameJob.id, jobId), eq(frameJob.status, "running"), eq(frameJob.updatedAt, claimedAt));
+  let jpeg: string;
+  try {
+    if (!job.timeline) throw new Error("Missing frame snapshot.");
+    jpeg = await renderFramePixels(job.projectId, job.timeline, job.frame);
+  } catch {
+    await db.update(frameJob).set({ status: "failed", timeline: null, error: "Could not render the saved frame.", updatedAt: new Date() }).where(mine);
+    return;
+  }
+  await db.update(frameJob).set({ status: "ready", data: jpeg, timeline: null, updatedAt: new Date() }).where(mine);
 }

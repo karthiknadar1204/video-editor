@@ -10,7 +10,7 @@ const folder = (v: Version) => "/cutroom/" + v.projectId + "/exports/" + v.id;
 const fileName = (attempt: number) => attempt + ".mp4";
 const localFolder = (v: Version) => join(projectExportDir(v.projectId), "versions", v.id);
 
-export async function publishOutput(v: Version, attempt: number, file: string, signal: AbortSignal) {
+export async function publishOutput(v: Version, attempt: number, file: string, signal: AbortSignal, options?: { replace: boolean }) {
   signal.throwIfAborted();
   if (v.storage === "local") {
     await mkdir(localFolder(v), { recursive: true, mode: 0o700 });
@@ -20,7 +20,7 @@ export async function publishOutput(v: Version, attempt: number, file: string, s
   const client = new ImageKit({ privateKey: imageKitCredentials().privateKey, timeout: 120_000, maxRetries: 0 });
   const bytes = Bun.file(file);
   const uploaded = await client.files.upload({ file: bytes, fileName: fileName(attempt), folder: folder(v),
-    isPrivateFile: true, useUniqueFileName: false, overwriteFile: false }, { signal });
+    isPrivateFile: true, useUniqueFileName: false, overwriteFile: options?.replace ?? false }, { signal });
   if (!uploaded.fileId) throw new Error("The output upload returned no file.");
   const info = await client.files.get(uploaded.fileId, { signal });
   if (!info.isPrivateFile || info.filePath !== folder(v) + "/" + fileName(attempt) || info.size !== bytes.size) {

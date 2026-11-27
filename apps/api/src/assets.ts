@@ -1,10 +1,11 @@
 import { readTimeline } from "@editor/timeline";
-import { and, eq, lt, ne } from "drizzle-orm";
+import { and, asc, eq, gt, isNotNull, lt, ne } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "./db/client";
 import { project, projectAsset, sourceAnalysis } from "./db/schema";
-import { analysisVersion, wakeAnalysisWorker } from "./analysis-worker";
+import { analysisVersion } from "../../worker/whisper";
+import { enqueueMedia, requestUpload } from "./queue";
 import { maxBytes, MediaError, originalName } from "./media";
 import { processUpload, removeAbandoned, serveAsset, storageMode, storeLocalOriginal, uploadTarget } from "./media-storage";
 
@@ -61,30 +62,63 @@ assets.post("/:assetId", async c => {
   if (!data.success) throw new MediaError("Invalid upload receipt.", 400);
   const row = c.get("upload");
   if (row.state === "ready" && row.asset) return c.json(row.asset);
-  const [claim] = await db.update(projectAsset).set({ state: "processing" }).where(and(byAsset(row), eq(projectAsset.state, "pending"))).returning({ id: projectAsset.id });
-  if (!claim) throw new MediaError("This media is being processed. Retry shortly.", 409);
-  try {
-    // All supported project formats run at 30 fps. Take the actual project rate for imported media.
-    const [source] = await db.select({ version: project.formatVersion, timeline: project.timeline }).from(project).where(eq(project.id, row.projectId));
-    const fps = readTimeline(source.version, source.timeline).fps;
-    const asset = await processUpload(row, data.data.fileId, path(row), fps);
-    await db.transaction(async tx => {
-      const [ready] = await tx.update(projectAsset).set({ state: "ready", asset }).where(and(byAsset(row), eq(projectAsset.state, "processing"))).returning({ id: projectAsset.id });
-      if (!ready) throw new MediaError("Upload cancelled.", 409);
-      const [current] = await tx.select().from(project).where(and(eq(project.id, row.projectId), eq(project.ownerId, c.get("ownerId")))).for("update");
-      if (!current) throw new MediaError("Project not found.", 404);
-      const timeline = readTimeline(current.formatVersion, current.timeline);
-      timeline.assets.push(asset);
-      await tx.insert(sourceAnalysis).values({ projectId: row.projectId, assetId: row.id, version: analysisVersion }).onConflictDoNothing();
-      await tx.update(project).set({ timeline, formatVersion: 2, revision: current.revision + 1, updatedAt: new Date() }).where(eq(project.id, current.id));
-    });
-    wakeAnalysisWorker();
-    return c.json(asset);
-  } catch (error) {
-    await db.update(projectAsset).set({ state: "pending" }).where(and(byAsset(row), eq(projectAsset.state, "processing")));
-    throw error;
-  }
+  const fileId = data.data.fileId ?? null;
+  const ticket = await db.transaction(async tx => {
+    const [current] = await tx.select().from(projectAsset).where(byAsset(row)).for("update");
+    if (!current || current.state === "cancelled") throw new MediaError("Upload cancelled.", 409);
+    if (current.state === "ready" && current.asset) return { asset: current.asset };
+    if (current.state === "processing" && current.uploadAttempt) {
+      if (current.uploadFileId !== fileId) throw new MediaError("A different upload receipt is already being processed.", 409);
+      return { attempt: current.uploadAttempt };
+    }
+    const attempt = crypto.randomUUID();
+    await tx.update(projectAsset).set({ state: "processing", uploadFileId: fileId, uploadAttempt: attempt, uploadError: null }).where(byAsset(row));
+    return { attempt };
+  });
+  if (ticket.asset) return c.json(ticket.asset);
+  const job = { projectId: row.projectId, assetId: row.id, attempt: ticket.attempt! };
+  // A worker may have saved the asset even if the queue connection carrying the acknowledgement was lost.
+  await requestUpload(job).catch(() => {});
+  const [saved] = await db.select().from(projectAsset).where(byAsset(row));
+  if (saved?.state === "ready" && saved.asset) return c.json(saved.asset);
+  if (!saved || saved.state === "cancelled") throw new MediaError("Upload cancelled.", 409);
+  if (saved.uploadAttempt === job.attempt && saved.uploadError) throw new MediaError(saved.uploadError.message, saved.uploadError.status);
+  throw new MediaError("Media processing is temporarily unavailable. Retry this upload.", 503);
 });
+
+type UploadJob = { projectId: string; assetId: string; attempt: string };
+export async function recoverUploads() {
+  const pending = await db.select({ projectId: projectAsset.projectId, assetId: projectAsset.id, attempt: projectAsset.uploadAttempt }).from(projectAsset)
+    .where(and(eq(projectAsset.state, "processing"), isNotNull(projectAsset.uploadAttempt), gt(projectAsset.expiresAt, new Date())))
+    .orderBy(asc(projectAsset.expiresAt)).limit(100);
+  await Promise.all(pending.flatMap(row => row.attempt ? [enqueueMedia({ kind: "upload", ...row, attempt: row.attempt })] : []));
+}
+
+export async function processUploadJob(job: UploadJob) {
+  const mine = and(eq(projectAsset.projectId, job.projectId), eq(projectAsset.id, job.assetId), eq(projectAsset.state, "processing"), eq(projectAsset.uploadAttempt, job.attempt));
+  const [row] = await db.select().from(projectAsset).where(and(mine, gt(projectAsset.expiresAt, new Date())));
+  if (!row) return;
+  const [source] = await db.select({ version: project.formatVersion, timeline: project.timeline }).from(project).where(eq(project.id, row.projectId));
+  if (!source) return;
+  let asset: NonNullable<AssetRow["asset"]>;
+  try {
+    asset = await processUpload(row, row.uploadFileId ?? undefined, path(row), readTimeline(source.version, source.timeline).fps);
+  } catch (cause) {
+    const error = cause instanceof MediaError ? cause : new MediaError("Could not process this upload. Retry shortly.", 503);
+    await db.update(projectAsset).set({ state: "pending", uploadError: { status: error.status, message: error.message } }).where(mine);
+    return;
+  }
+  await db.transaction(async tx => {
+    const [ready] = await tx.update(projectAsset).set({ state: "ready", asset, uploadError: null }).where(mine).returning({ id: projectAsset.id });
+    if (!ready) return;
+    const [current] = await tx.select().from(project).where(eq(project.id, row.projectId)).for("update");
+    const timeline = readTimeline(current.formatVersion, current.timeline);
+    timeline.assets.push(asset);
+    await tx.insert(sourceAnalysis).values({ projectId: row.projectId, assetId: row.id, version: analysisVersion }).onConflictDoNothing();
+    await tx.update(project).set({ timeline, formatVersion: 2, revision: current.revision + 1, updatedAt: new Date() }).where(eq(project.id, current.id));
+  });
+  await enqueueMedia({ kind: "analysis", projectId: row.projectId, assetId: row.id });
+}
 
 assets.delete("/:assetId", async c => {
   const row = c.get("upload");
@@ -108,16 +142,13 @@ export async function cleanExpiredUploads() {
     const until = new Date();
     const expired = await db.select().from(projectAsset).where(and(ne(projectAsset.state, "ready"), lt(projectAsset.expiresAt, until))).limit(100);
     for (const row of expired) {
-      const [claimed] = await db.update(projectAsset).set({ state: "cancelled" })
+      const claimUntil = new Date(Date.now() + 10 * 60_000);
+      const [claimed] = await db.update(projectAsset).set({ state: "cancelled", expiresAt: claimUntil })
         .where(and(byAsset(row), ne(projectAsset.state, "ready"), lt(projectAsset.expiresAt, until))).returning();
       if (claimed) {
         await removeAbandoned(claimed);
-        await db.delete(projectAsset).where(and(byAsset(row), eq(projectAsset.state, "cancelled")));
+        await db.delete(projectAsset).where(and(byAsset(row), eq(projectAsset.state, "cancelled"), eq(projectAsset.expiresAt, claimUntil)));
       }
     }
   } finally { sweeping = false; }
 }
-
-function sweep() { void cleanExpiredUploads().catch(() => console.error("Expired media cleanup will retry.")); }
-setTimeout(sweep, 1_000).unref();
-setInterval(sweep, 15 * 60_000).unref();

@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "bun src/db/migrate.ts",
+    "db:migrate": "bun --env-file=.env.migrations.local src/db/migrate.ts",
+    "worker": "env -u OPENAI_API_KEY bun src/worker.ts",
     "dev": "env -u OPENAI_API_KEY bun --watch src/index.ts",
     "start": "NODE_ENV=production env -u OPENAI_API_KEY bun src/index.ts"
   },
