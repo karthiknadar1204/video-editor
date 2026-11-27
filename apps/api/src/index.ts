@@ -1,8 +1,12 @@
 import { Hono } from "hono";
 import { streamText } from "hono/streaming";
 import { exportFile, workerDir } from "../../worker/paths";
+import { auth } from "./auth";
+import { projects } from "./projects";
 
 const app = new Hono();
+app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+app.route("/api/projects", projects);
 let rendering = false;
 
 app.post("/api/export", (c) => {
@@ -16,6 +20,8 @@ app.post("/api/export", (c) => {
       await stream.writeln("Rendering");
       const worker = Bun.spawn(["node", "--import", "tsx", "src/render.ts"], {
         cwd: workerDir, stdout: "pipe", stderr: "inherit",
+        env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR,
+          REMOTION_BROWSER_EXECUTABLE: process.env.REMOTION_BROWSER_EXECUTABLE },
       });
       for await (const chunk of worker.stdout) await stream.write(chunk);
       await stream.writeln((await worker.exited) === 0 ? "Ready" : "Failed");

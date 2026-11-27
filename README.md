@@ -8,6 +8,15 @@ Use Bun 1.3.3 and Node 22.19.0. Start both services from the repository root.
 
 ```sh
 bun install --frozen-lockfile
+docker compose up -d --wait
+cp apps/api/.env.example apps/api/.env.local
+openssl rand -hex 32
+```
+
+Paste the generated value into `BETTER_AUTH_SECRET` in `apps/api/.env.local`. Then migrate the development database and start the app.
+
+```sh
+MIGRATION_DATABASE_URL=postgresql://cutroom_owner:local-owner@127.0.0.1:55432/cutroom bun run db:migrate
 bun run dev
 ```
 

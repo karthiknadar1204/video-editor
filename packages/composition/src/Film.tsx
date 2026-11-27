@@ -22,14 +22,14 @@ export function Film({ timeline }: { timeline: Timeline }) {
           />
         </Sequence>
       ))}
-      <Sequence from={timeline.title.start} durationInFrames={timeline.title.duration}>
+      {timeline.title && <Sequence from={timeline.title.start} durationInFrames={timeline.title.duration}>
         <div style={{
           position: "absolute", left: 68, bottom: 224, color: "white",
           fontFamily: '"Cutroom Inter", sans-serif', fontSize: 76,
           lineHeight: 1, fontWeight: 650, letterSpacing: "-0.06em",
           textShadow: "0 2px 12px rgba(0,0,0,.55)",
         }}>{timeline.title.text}</div>
-      </Sequence>
+      </Sequence>}
     </AbsoluteFill>
   );
 }
