@@ -1,0 +1,24 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cutroom_owner
+      POSTGRES_PASSWORD: local-owner
+      POSTGRES_DB: cutroom
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - cutroom_data:/var/lib/postgresql/data
+      - ./apps/api/src/db/local.sql:/docker-entrypoint-initdb.d/local.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cutroom_owner -d cutroom"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+  mail:
+    image: axllent/mailpit:v1.34.0
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+volumes:
+  cutroom_data:
