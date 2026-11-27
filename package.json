@@ -15,6 +15,7 @@
     "render": "bun run --cwd apps/worker render",
     "typecheck": "tsc --noEmit && bun run --cwd apps/web typecheck",
     "test": "playwright test",
+    "test:timeline": "bun test packages/timeline/test",
     "test:migrations": "bun apps/api/test/migrations.ts"
   },
   "devDependencies": {

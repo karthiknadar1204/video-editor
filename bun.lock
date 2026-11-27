@@ -66,6 +66,9 @@
     },
     "packages/timeline": {
       "name": "@editor/timeline",
+      "dependencies": {
+        "zod": "4.6.7",
+      },
     },
   },
   "packages": {
