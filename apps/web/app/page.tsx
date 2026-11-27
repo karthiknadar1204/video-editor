@@ -41,8 +41,8 @@ function FrameControls({ player }: { player: RefObject<PlayerRef | null> }) {
 export default function Page() {
   const player = useRef<PlayerRef>(null);
   const cues = [
-    { frame: film.videoTrack[0].start, label: "Opening shot", detail: "Wide view", image: "opening" },
-    { frame: film.title.start, label: "Title in", detail: "Close view", image: "title" },
+    { frame: film.clips[0].start, label: "Opening shot", detail: "Wide view", image: "opening" },
+    { frame: film.clips[1].start, label: "Title in", detail: "Close view", image: "title" },
   ];
 
   function seek(frame: number) {

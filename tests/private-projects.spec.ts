@@ -1,40 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import postgres from "postgres";
-import { mailbox, testDatabase, webOrigin } from "./local";
+import { testDatabase, webOrigin } from "./local";
 
-const password = "cutroom-test-password";
-
-async function mailLink(request: APIRequestContext, email: string, subject: string) {
-  const search = new URL("/api/v1/search", mailbox);
-  search.searchParams.set("query", 'to:' + email + ' subject:"' + subject + '"');
-  let messageId = "";
-  await expect.poll(async () => {
-    const result = await (await request.get(search.href)).json();
-    messageId = result.messages?.[0]?.ID ?? "";
-    return Boolean(messageId);
-  }).toBe(true);
-  const message = await (await request.get(mailbox + "/api/v1/message/" + messageId)).json();
-  const link = new URL(message.Text.match(/https?:\/\/[^\s]+/)[0]);
-  expect(link.origin).toBe(webOrigin);
-  return link.href;
-}
-
-async function signup(page: Page, email: string, checkUnverifiedLogin = false) {
-  await page.goto("/account?view=signup");
-  await page.getByLabel("Name", { exact: true }).fill("Test editor");
-  await page.getByLabel("Email", { exact: true }).fill(email);
-  await page.getByLabel("Password", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Create an account" }).click();
-  await expect(page.getByRole("status")).toContainText("Check your inbox");
-  expect((await page.request.get("/api/projects")).status()).toBe(401);
-  if (checkUnverifiedLogin) {
-    const unverified = await page.request.post("/api/auth/sign-in/email", { data: { email, password, callbackURL: "/projects" } });
-    expect(unverified.status()).toBe(403);
-  }
-  await page.goto(await mailLink(page.request, email, "Verify your Cutroom email"));
-  await expect(page.getByRole("heading", { name: "My projects" })).toBeVisible();
-}
+import { mailLink, password, signup } from "./accounts";
 
 test("two verified accounts can reopen only their own projects and can sign out", async ({ page, browser, request }) => {
   await page.goto("/projects");
@@ -50,7 +19,7 @@ test("two verified accounts can reopen only their own projects and can sign out"
   await page.reload();
   await expect(page.getByText("720 × 1280 · 30 fps")).toBeVisible();
   const saved = await (await page.request.get("/api" + projectPath)).json();
-  expect(saved).toMatchObject({ revision: 0, formatVersion: 1, timeline: { videoTrack: [], title: null, durationInFrames: 0 } });
+  expect(saved).toMatchObject({ revision: 0, formatVersion: 2, timeline: { clips: [], durationInFrames: 0 } });
   await page.getByRole("link", { name: "My projects" }).click();
   await page.getByRole("link", { name: /Morning interview/ }).click();
   await expect(page).toHaveURL(webOrigin + projectPath);
@@ -66,6 +35,8 @@ test("two verified accounts can reopen only their own projects and can sign out"
     const second = await (await b.request.get("/api/projects/" + id)).json();
     expect(second.timeline).toMatchObject({ width: 1080, height: 1080 });
     expect((await b.request.get("/api" + projectPath)).status()).toBe(404);
+    expect((await b.request.post("/api" + projectPath + "/edits", { data: { kind: "undo", requestId: randomUUID(), expectedRevision: 0 } })).status()).toBe(404);
+    expect((await b.request.get("/api" + projectPath + "/events")).status()).toBe(404);
     expect((await page.request.get("/api/projects/" + id)).status()).toBe(404);
     await b.goto(projectPath);
     await expect(b.getByRole("heading", { name: "Project unavailable" })).toBeVisible();

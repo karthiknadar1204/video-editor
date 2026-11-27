@@ -1,5 +1,5 @@
-import type { Timeline } from "@editor/timeline";
-import { bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import type { EditRequest, Patch, Timeline } from "@editor/timeline";
+import { bigint, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 const time = (name: string) => timestamp(name, { withTimezone: true });
 const timestamps = () => ({
@@ -65,3 +65,18 @@ export const project = pgTable("project", {
   revision: integer().notNull().default(0),
   ...timestamps(),
 }, t => [index().on(t.ownerId, t.updatedAt, t.id)]);
+
+export const projectEdit = pgTable("project_edit", {
+  projectId: uuid("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
+  revision: integer().notNull(),
+  actorId: text("actor_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  requestId: uuid("request_id").notNull(),
+  command: jsonb().$type<EditRequest>().notNull(),
+  forward: jsonb().$type<Patch>().notNull(),
+  inverse: jsonb().$type<Patch>().notNull(),
+  affected: jsonb().$type<{ from: number; to: number }>(),
+  state: text({ enum: ["applied", "undone", "abandoned"] }),
+  targetRevision: integer("target_revision"),
+  createdAt: time("created_at").defaultNow().notNull(),
+}, t => [primaryKey({ columns: [t.projectId, t.revision] }), unique().on(t.projectId, t.requestId),
+  index().on(t.projectId, t.state, t.revision)]);
