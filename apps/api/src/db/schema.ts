@@ -1,4 +1,4 @@
-import type { EditorContext, EditRequest, Patch, RunActivity, RunView, Timeline, TranscriptWord } from "@editor/timeline";
+import type { Change, EditorContext, EditRequest, Patch, RoughCutOptions, RoughCutReceipt, RunActivity, RunView, Timeline, TranscriptWord } from "@editor/timeline";
 import { bigint, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 const time = (name: string) => timestamp(name, { withTimezone: true });
@@ -144,3 +144,19 @@ export const sourceTranscript = pgTable("source_transcript", {
   imported: jsonb().$type<TranscriptWord[]>(),
   reviewed: jsonb().$type<TranscriptWord[]>(),
 }, t => [primaryKey({ columns: [t.projectId, t.assetId] })]);
+
+export { exportVersion, exportAttempt, exportSource } from "./export-schema";
+
+export const roughCutReview = pgTable("rough_cut_review", {
+  projectId: uuid("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
+  id: uuid().notNull(),
+  runId: uuid("run_id").references(() => codexRun.id, { onDelete: "cascade" }),
+  options: jsonb().$type<RoughCutOptions>().notNull(),
+  baseRevision: integer("base_revision").notNull(),
+  before: jsonb().$type<Timeline>().notNull(),
+  operations: jsonb().$type<Change[]>().notNull(),
+  receipt: jsonb().$type<RoughCutReceipt>().notNull(),
+  committedRevision: integer("committed_revision"),
+  previewImage: jsonb("preview_image").$type<{ frame: number; data: string }>(),
+  createdAt: time("created_at").defaultNow().notNull(),
+}, t => [primaryKey({ columns: [t.projectId, t.id] }), index().on(t.projectId, t.createdAt)]);

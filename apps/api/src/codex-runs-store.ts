@@ -21,8 +21,8 @@ export async function addActivity(id: string, text: string) {
 export function recordTool(id:string, tool:string, detail:string) {
   return addActivity(id, tool + " · " + detail);
 }
-export async function recordEdit(tx:EditTransaction, id:string, receipt:EditReceipt) {
-  await tx.update(codexRun).set({receipt, events:append("Title saved · revision " + receipt.revision)}).where(eq(codexRun.id,id));
+export async function recordEdit(tx:EditTransaction, id:string, receipt:EditReceipt, label = "Title saved") {
+  await tx.update(codexRun).set({receipt, events:append(label + " · revision " + receipt.revision)}).where(eq(codexRun.id,id));
 }
 export async function finishRun(id:string, status:Exclude<RunView["status"],"running">, result:string) {
   await db.update(codexRun).set({status,result:result.slice(0,8000)}).where(and(eq(codexRun.id,id),eq(codexRun.status,"running")));

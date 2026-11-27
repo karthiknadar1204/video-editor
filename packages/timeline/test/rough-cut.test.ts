@@ -92,3 +92,18 @@ test("estimated passages can receive captions; automatic cuts require measured o
   expect(noSpeech.operations).toHaveLength(0);
   expect(noSpeech.timeline).toEqual(original);
 });
+
+test("moving a manually split and trimmed caption keeps its active words attached to the surviving audio", () => {
+  const source = [word("Hi", 0, 300), word("there", 300, 800), word("again", 800, 1200)];
+  const draft = prepareRoughCut(original, { [recording]: source }, { ...options, captions: { style: "highlight" } }, "words");
+  const edited = editTimeline(draft.timeline, [
+    { type: "split", id: "camera", frame: 15, rightId: "part-b" },
+    { type: "trim", id: "part-b", edge: "left", frame: 20 },
+    { type: "move", id: "part-b", start: 50 },
+  ]);
+  expect(edited.timeline.clips.filter(c => c.track === "caption")).toMatchObject([
+    { start: 0, duration: 15, text: "Hi there", caption: { words: [{ text: "Hi", from: 0, to: 9 }, { text: "there", from: 9, to: 15 }] } },
+    { start: 50, duration: 16, text: "there again", caption: { words: [{ text: "there", from: 0, to: 4 }, { text: "again", from: 4, to: 16 }] } },
+  ]);
+  expect(applyPatch(edited.timeline, edited.inverse)).toEqual(draft.timeline);
+});

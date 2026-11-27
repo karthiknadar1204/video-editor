@@ -68,10 +68,10 @@ export async function markConnected(access: ProjectAccess) {
     .where(and(eq(codexConnection.projectId, access.projectId), eq(codexConnection.secretHash, access.hash)));
 }
 
-export async function selectionWasRemoved(access: Extract<ProjectAccess, { kind: "run" }>, revision: number) {
+export async function selectionWasRemoved(access: Extract<ProjectAccess, { kind: "run" }>, revision: number, conn: EditTransaction | typeof db = db) {
   const { clipId, revision: captured } = access.context;
   if (!clipId || revision <= captured) return false;
-  const [removed] = await db.select({ revision: projectEdit.revision }).from(projectEdit)
+  const [removed] = await conn.select({ revision: projectEdit.revision }).from(projectEdit)
     .where(and(eq(projectEdit.projectId, access.projectId), gt(projectEdit.revision, captured), lte(projectEdit.revision, revision),
       sql`(${projectEdit.forward}->'remove' ? ${clipId} or ${projectEdit.command}->'operations' @>
         ${JSON.stringify([{ type: "add", clip: { id: clipId } }])}::jsonb)`)).limit(1);
@@ -79,7 +79,7 @@ export async function selectionWasRemoved(access: Extract<ProjectAccess, { kind:
 }
 
 // Serialize a project edit with Stop, key rotation or revocation in the same database transaction.
-export async function authorizeEdit(tx: EditTransaction, access: ProjectAccess, clipId: string, revision: number) {
+export async function authorizeProjectAccess(tx: EditTransaction, access: ProjectAccess) {
   if (access.kind === "external") {
     const [key] = await tx.select({ id: codexConnection.projectId }).from(codexConnection)
       .where(and(eq(codexConnection.projectId, access.projectId), eq(codexConnection.secretHash, access.hash), gt(codexConnection.expiresAt, new Date()))).for("update");
@@ -89,6 +89,12 @@ export async function authorizeEdit(tx: EditTransaction, access: ProjectAccess, 
   const [run] = await tx.select({ context: codexRun.context, read: codexRun.lastReadRevision, receipt: codexRun.receipt }).from(codexRun)
     .where(and(eq(codexRun.id, access.id), eq(codexRun.tokenHash, access.hash), eq(codexRun.status, "running"), gt(codexRun.expiresAt, new Date()))).for("update");
   if (!run) throw new HistoryError(409, "The Codex turn has ended.");
+  return run;
+}
+
+export async function authorizeEdit(tx: EditTransaction, access: ProjectAccess, clipId: string, revision: number) {
+  const run = await authorizeProjectAccess(tx, access);
+  if (!run) return;
   if (!run.context.clipId || clipId !== run.context.clipId) throw new HistoryError(422, "Choose the selected title captured for this turn.");
   if (!run.receipt && revision !== run.context.revision && revision !== run.read) throw new HistoryError(409, "Read the current project before rebasing the title edit.");
 }

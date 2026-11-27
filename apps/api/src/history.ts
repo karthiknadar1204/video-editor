@@ -27,11 +27,14 @@ export class HistoryError extends Error {
 
 export type EditTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export type EditReceipt = NonNullable<RunView["receipt"]>;
-export async function saveEdit(id: string, owner: string, command: EditRequest, hooks?: {
+type EditHooks = {
   before?: (tx: EditTransaction) => Promise<void>;
   after?: (tx: EditTransaction, receipt: EditReceipt) => Promise<void>;
-}) {
-  return db.transaction(async tx => {
+};
+export function saveEdit(id: string, owner: string, command: EditRequest, hooks?: EditHooks) {
+  return db.transaction(tx => saveEditInTransaction(tx, id, owner, command, hooks));
+}
+export async function saveEditInTransaction(tx: EditTransaction, id: string, owner: string, command: EditRequest, hooks?: EditHooks) {
     await hooks?.before?.(tx);
     const [row] = await tx.select().from(project).where(owned(id, owner)).for("update");
     if (!row) throw new HistoryError(404, "Project not found.");
@@ -66,5 +69,4 @@ export async function saveEdit(id: string, owner: string, command: EditRequest, 
     const receipt = { requestId: command.requestId, revision, affected: change.affected };
     await hooks?.after?.(tx, receipt);
     return receipt;
-  });
 }

@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { streamText } from "hono/streaming";
 import { exportFile } from "../../worker/paths";
-import { renderSequence } from "./project-export";
+import { publicWatch, renderSequence } from "./project-export";
+import { wakeExportWorker } from "./export-jobs";
 import { auth } from "./auth";
 import { projects } from "./projects";
 import { mcp } from "./mcp";
@@ -12,6 +13,8 @@ const app = new Hono();
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/projects", projects);
 app.route("/api/mcp", mcp);
+app.route("/api/watch", publicWatch);
+wakeExportWorker();
 wakeFrameWorker();
 wakeAnalysisWorker();
 setInterval(wakeAnalysisWorker, 30_000).unref();

@@ -6,7 +6,19 @@ import { bundle } from "@remotion/bundler";
 import { ensureBrowser, renderMedia, renderStill, selectComposition } from "@remotion/renderer";
 import { exportFile, renderDir } from "../paths";
 
+function buildBundle(outDir: string) {
+  return bundle({
+    entryPoint: fileURLToPath(new URL("../../../packages/composition/src/root.tsx", import.meta.url)),
+    publicDir: fileURLToPath(new URL("../../web/public", import.meta.url)),
+    outDir,
+  });
+}
+
 async function render() {
+  if (process.env.CUTROOM_FREEZE_BUNDLE) {
+    await buildBundle(process.env.CUTROOM_FREEZE_BUNDLE);
+    return;
+  }
   const browserExecutable = process.env.REMOTION_BROWSER_EXECUTABLE;
   const job = process.env.CUTROOM_RENDER_JOB;
   const still = process.env.CUTROOM_RENDER_FRAME;
@@ -16,11 +28,9 @@ async function render() {
   await mkdir(renderDir, { recursive: true });
   const work = await mkdtemp(join(job ?? renderDir, "render-"));
   try {
-    const serveUrl = await bundle({
-      entryPoint: fileURLToPath(new URL("../../../packages/composition/src/root.tsx", import.meta.url)),
-      publicDir: fileURLToPath(new URL("../../web/public", import.meta.url)),
-      outDir: join(work, "bundle"),
-    });
+    const serveUrl = join(work, "bundle");
+    if (process.env.CUTROOM_RENDER_BUNDLE) await cp(process.env.CUTROOM_RENDER_BUNDLE, serveUrl, { recursive: true });
+    else await buildBundle(serveUrl);
     if (job) await cp(join(job, "assets"), join(serveUrl, "public", "imports"), { recursive: true });
     const composition = await selectComposition({ serveUrl, id: earthrise.id, inputProps, browserExecutable });
     if (job && still !== undefined) {

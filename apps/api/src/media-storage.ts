@@ -15,7 +15,7 @@ const localFolder = (row: Upload) => join(localRoot, row.projectId, row.id);
 const remoteFolder = (row: Upload) => "/cutroom/" + row.projectId + "/" + row.id;
 const now = () => Math.floor(Date.now() / 1000);
 
-function credentials() {
+export function imageKitCredentials() {
   const privateKey = process.env.IMAGEKIT_PRIVATE_KEY, publicKey = process.env.IMAGEKIT_PUBLIC_KEY, urlEndpoint = process.env.IMAGEKIT_URL_ENDPOINT;
   if (!privateKey || !publicKey || !urlEndpoint?.startsWith("https://")) throw new MediaError("ImageKit uploads are not configured.", 503);
   return { privateKey, publicKey, urlEndpoint };
@@ -23,13 +23,13 @@ function credentials() {
 
 export function storageMode() {
   if (process.env.CUTROOM_MEDIA_STORAGE === "local") return "local";
-  credentials();
+  imageKitCredentials();
   return "imagekit";
 }
 
 export function uploadTarget(row: Upload, base: string) {
   if (row.storage === "local") return { method: "PUT", url: base + "/original", fields: {} };
-  const { privateKey, publicKey } = credentials();
+  const { privateKey, publicKey } = imageKitCredentials();
   const fields = { fileName: originalName(row.mime), folder: remoteFolder(row), isPrivateFile: "true",
     useUniqueFileName: "false", overwriteFile: "false", checks: '"file.size" <= ' + row.size };
   const encode = (obj: object) => Buffer.from(JSON.stringify(obj)).toString("base64url");
@@ -74,7 +74,7 @@ export async function storeLocalOriginal(row: Upload, request: Request) {
 }
 
 function signedURL(row: Upload, file: string) {
-  const { privateKey, urlEndpoint } = credentials();
+  const { privateKey, urlEndpoint } = imageKitCredentials();
   return new ImageKit({ privateKey }).helper.buildSrc({ urlEndpoint, src: remoteFolder(row) + "/" + file,
     transformation: [{ original: true }], signed: true, expiresIn: 300 });
 }
@@ -83,7 +83,7 @@ export async function processUpload(row: Upload, fileId: string | undefined, bas
   const remote = row.storage === "imagekit";
   const folder = remote ? await mkdtemp(join(tmpdir(), "cutroom-ingest-")) : localFolder(row);
   try {
-    const client = remote ? new ImageKit({ privateKey: credentials().privateKey, maxRetries: 1, timeout: 60_000 }) : null;
+    const client = remote ? new ImageKit({ privateKey: imageKitCredentials().privateKey, maxRetries: 1, timeout: 60_000 }) : null;
     if (client) {
       if (!fileId) throw new MediaError("Missing uploaded file ID.", 400);
       const details = await client.files.get(fileId);
@@ -107,7 +107,7 @@ export async function processUpload(row: Upload, fileId: string | undefined, bas
 
 export async function removeAbandoned(row: Upload) {
   if (row.storage === "local") { await rm(localFolder(row), { recursive: true, force: true }); return; }
-  const client = new ImageKit({ privateKey: credentials().privateKey, maxRetries: 1 });
+  const client = new ImageKit({ privateKey: imageKitCredentials().privateKey, maxRetries: 1 });
   const path = remoteFolder(row);
   for (const file of await client.assets.list({ type: "file", path: path + "/" })) {
     if (file.fileId && file.filePath?.startsWith(path + "/")) await client.files.delete(file.fileId);
@@ -132,10 +132,13 @@ export async function serveAsset(row: Upload, kind: string, range: string | unde
     headers.set("Location", signedURL(row, name));
     return new Response(null, { status: 307, headers });
   }
-  const path = join(localFolder(row), name);
+  headers.set("Content-Type", kind === "original" ? row.mime : kind === "thumbnail" ? "image/jpeg" : row.asset?.metadata?.mediaType === "audio" ? "audio/mp4" : "video/mp4");
+  return serveLocalFile(join(localFolder(row), name), headers, range);
+}
+
+export async function serveLocalFile(path: string, headers: Headers, range: string | undefined) {
   const size = (await stat(path)).size;
   const file = Bun.file(path);
-  headers.set("Content-Type", kind === "original" ? row.mime : kind === "thumbnail" ? "image/jpeg" : row.asset?.metadata?.mediaType === "audio" ? "audio/mp4" : "video/mp4");
   headers.set("Accept-Ranges", "bytes");
   if (!range) { headers.set("Content-Length", String(size)); return new Response(file, { headers }); }
   const match = /^bytes=(\d*)-(\d*)$/.exec(range);

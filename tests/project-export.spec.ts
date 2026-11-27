@@ -30,14 +30,16 @@ test("export downloads the saved portrait edit with private source media and rej
   await page.goto("/projects/" + id);
   const started = page.waitForResponse(r => r.url().endsWith(path + "/export") && r.request().method() === "POST");
   await page.getByRole("button", { name: "Export MP4" }).click();
-  expect((await started).status()).toBe(200);
+  const admission = await started;
+  expect(admission.status()).toBe(200);
+  const exportId = (await admission.json()).id;
   const changed = await page.request.post(path + "/edits", { data: { kind: "edit", expectedRevision: 2, requestId: randomUUID(), operations: [
     { type: "position", id: "title", x: 2000, y: 40 },
   ] } });
   expect(changed.status()).toBe(200);
   const download = page.getByRole("link", { name: /Download (MP4|revision 2)/ });
   await expect(download).toBeVisible({ timeout: 90_000 });
-  await expect(download).toHaveAttribute("href", path + "/export?revision=2");
+  await expect(download).toHaveAttribute("href", path + "/exports/" + exportId + "/file");
   expect((await page.request.get(path + "/export?revision=3")).status()).toBe(404);
   const [file] = await Promise.all([page.waitForEvent("download"), download.click()]);
   expect(file.suggestedFilename()).toBe("Orbit portrait.mp4");

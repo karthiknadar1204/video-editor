@@ -4,17 +4,20 @@ import { AbsoluteFill, Html5Audio, OffthreadVideo, Sequence, staticFile, useCurr
 
 if (typeof document !== "undefined") {
   void loadFont({ family: "Cutroom Inter", url: staticFile("fonts/inter-latin.woff2"), weight: "100 900" });
+  void loadFont({ family: "Cutroom PT Serif", url: staticFile("fonts/pt-serif-latin-700-normal.woff2"), weight: "700" });
+  void loadFont({ family: "Cutroom Plex Mono", url: staticFile("fonts/ibm-plex-mono-latin-600-normal.woff2"), weight: "600" });
 }
+const captionFonts = { sans: ["Cutroom Inter", 650], serif: ["Cutroom PT Serif", 700], mono: ["Cutroom Plex Mono", 600] } as const;
 
 function Content({ clip, assets }: { clip: Clip; assets: Timeline["assets"] }) {
   const { width, height } = useVideoConfig();
   const frame = useCurrentFrame();
   if (clip.kind === "text") {
     if (clip.caption) {
-      const fonts = { sans: '"Cutroom Inter", sans-serif', serif: 'Georgia, serif', mono: 'monospace' };
       const cue = clip.caption;
+      const [family, weight] = captionFonts[cue.font];
       return <div style={{ position: "absolute", left: clip.x, top: clip.y, width: Math.round(width * .88), textAlign: "center",
-        fontFamily: fonts[cue.font], color: clip.color, fontWeight: 650, fontSize: clip.fontSize, lineHeight: 1.23, overflowWrap: "anywhere" }}>
+        fontFamily: family, color: clip.color, fontWeight: weight, fontSize: clip.fontSize, lineHeight: 1.23, overflowWrap: "anywhere" }}>
         {cue.words.length > 0 && <span style={{ background: "rgba(0,0,0,.78)", padding: "0.06em 0.20em", boxDecorationBreak: "clone",
           WebkitBoxDecorationBreak: "clone", borderRadius: ".13em" }}>{cue.words.map((word, i) =>
           <span key={i} style={{ color: cue.style === "highlight" && frame >= word.from && frame < word.to ? cue.highlightColor : clip.color }}>

@@ -1,110 +1,103 @@
-import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
-import { extname, join } from "node:path";
-import { rushes, sample, type Timeline } from "@editor/timeline";
-import { and, eq } from "drizzle-orm";
+import { join } from "node:path";
 import { Hono } from "hono";
 import { streamText } from "hono/streaming";
 import { z } from "zod";
-import { projectExportDir, workerDir } from "../../worker/paths";
+import { projectExportDir } from "../../worker/paths";
+import { AllowanceError } from "./allowance";
+import { changeAttempt, changeShare, completedVersion, ExportError, getExport, listExports, startExport } from "./export-jobs";
+import { streamOutput } from "./export-storage";
 import { getProject } from "./history";
-import { db } from "./db/client";
-import { projectAsset } from "./db/schema";
-import { originalName } from "./media";
-import { stageOriginal } from "./media-storage";
-import { AllowanceError, takeAllowance } from "./allowance";
+import { serveLocalFile } from "./media-storage";
 
-export async function renderSequence(write: (chunk: Uint8Array) => Promise<unknown>, job?: string, still?: { frame: number; signal: AbortSignal }) {
-  const worker = Bun.spawn(["node", "--import", "tsx", "src/render.ts"], {
-    cwd: workerDir, stdout: "pipe", stderr: "inherit", signal: still?.signal, killSignal: "SIGKILL",
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR,
-      REMOTION_BROWSER_EXECUTABLE: process.env.REMOTION_BROWSER_EXECUTABLE,
-      CUTROOM_RENDER_DIR: process.env.CUTROOM_RENDER_DIR, CUTROOM_RENDER_JOB: job, CUTROOM_RENDER_FRAME: still?.frame.toString() },
-  });
-  try {
-    for await (const chunk of worker.stdout) await write(chunk);
-  } catch (error) {
-    worker.kill("SIGKILL");
-    await worker.exited;
-    throw error;
-  }
-  if (await worker.exited !== 0) throw new Error("The render worker could not finish this export.");
-}
-
-// Materialize referenced originals inside the render job so the renderer needs no credentials.
-export async function prepareProject(job: string, projectId: string, timeline: Timeline, signal?: AbortSignal) {
-  await mkdir(join(job, "assets"));
-  const used = new Set(timeline.clips.flatMap(c => c.kind === "media" ? [c.assetId] : []));
-  const assets = [];
-  for (const asset of timeline.assets.filter(a => used.has(a.id))) {
-    signal?.throwIfAborted();
-    if ([sample, rushes].some(bundled => asset.src === bundled.src)) {
-      assets.push(asset);
-      continue;
-    }
-    const assetId = z.uuid().safeParse(asset.id);
-    const [row] = assetId.success ? await db.select().from(projectAsset).where(and(eq(projectAsset.id, assetId.data),
-      eq(projectAsset.projectId, projectId), eq(projectAsset.state, "ready"))) : [];
-    if (!row) throw new Error("Unknown source for " + asset.name);
-    const filename = asset.id + extname(originalName(row.mime));
-    await stageOriginal(row, join(job, "assets", filename), signal);
-    assets.push({ ...asset, src: "imports/" + filename });
-  }
-  await writeFile(join(job, "timeline.json"), JSON.stringify({ ...timeline, assets }));
-}
-
+export { prepareProject, renderSequence } from "./project-render";
 export const projectExports = new Hono<{ Variables: { ownerId: string } }>();
-const revisionSchema = z.int().nonnegative();
-let rendering = false;
+export const publicWatch = new Hono();
+const number = z.int().nonnegative().max(2_147_483_647);
+const body = z.strictObject({ revision: number });
+
+projectExports.use("/:id/exports/*", async (c, next) => {
+  if (!z.uuid().safeParse(c.req.param("id")).success) return c.json({ error: "Project not found." }, 404);
+  await next();
+});
+projectExports.onError((e, c) => {
+  if (e instanceof ExportError || e instanceof AllowanceError) return c.json({ error: e.message }, e.status);
+  return c.json({ error: "Could not access this export. Try again." }, 503);
+});
 
 projectExports.post("/:id/export", async c => {
-  const id = z.uuid().safeParse(c.req.param("id"));
-  const project = id.success && await getProject(id.data, c.get("ownerId"));
-  if (!project) return c.json({ error: "Project not found." }, 404);
-  const command = z.strictObject({ revision: revisionSchema }).safeParse(await c.req.json().catch(() => null));
-  if (!command.success) return c.json({ error: "Choose a saved revision to export." }, 400);
-  if (project.revision !== command.data.revision) return c.json({ error: "The project changed. Load its latest revision before exporting." }, 409);
-  if (!project.timeline.durationInFrames) return c.json({ error: "Add a clip before exporting." }, 422);
-  const directory = projectExportDir(project.id);
-  const output = join(directory, project.revision + ".mp4");
-  if (await Bun.file(output).exists()) return c.text("Ready\n");
-  if (rendering) return c.json({ error: "An export is running. Try again when it finishes." }, 409);
-  rendering = true;
-  try {
-    await takeAllowance(c.get("ownerId"), "render");
-  } catch (error) {
-    rendering = false;
-    if (error instanceof AllowanceError) return c.json({ error: error.message }, 429);
-    throw error;
-  }
+  const input = body.safeParse(await c.req.json().catch(() => null));
+  if (!input.success) return c.json({ error: "Choose a saved revision to export." }, 400);
+  const owner = { ownerId: c.get("ownerId"), projectId: c.req.param("id") };
+  const saved = await startExport({ ...owner, ...input.data });
+  if (c.req.header("Accept")?.includes("application/json")) return c.json(saved);
   c.header("Cache-Control", "private, no-store, no-transform");
   c.header("X-Accel-Buffering", "no");
   return streamText(c, async stream => {
-    let job: string | undefined;
-    try {
-      await stream.writeln("Preparing");
-      await mkdir(directory, { recursive: true });
-      job = await mkdtemp(join(directory, "render-"));
-      await prepareProject(job, project.id, project.timeline);
-      await renderSequence(chunk => stream.write(chunk), job);
-      await rename(join(job, "output.mp4"), output);
-      await stream.writeln("Ready");
-    } catch {
-      await stream.writeln("Failed");
-    } finally {
-      rendering = false;
-      if (job) await rm(job, { recursive: true, force: true });
+    let row = saved, previous = "";
+    while (!stream.aborted) {
+      const label = row.status === "completed" ? "Ready" : ["failed", "cancelled"].includes(row.status) ? "Failed" :
+        row.status === "queued" ? "Preparing" : String(row.progress);
+      if (label !== previous) { await stream.writeln(label); previous = label; }
+      if (label === "Ready" || label === "Failed") return;
+      await stream.sleep(700);
+      if (!stream.aborted) row = await getExport({ ...owner, exportId: row.id });
     }
   });
 });
-
 projectExports.get("/:id/export", async c => {
-  const id = z.uuid().safeParse(c.req.param("id"));
-  const project = id.success && await getProject(id.data, c.get("ownerId"));
-  if (!project) return c.json({ error: "Project not found." }, 404);
-  const revision = z.string().regex(/^\d+$/).transform(Number).pipe(revisionSchema).safeParse(c.req.query("revision"));
+  const revision = z.string().regex(/^\d+$/).transform(Number).pipe(number).safeParse(c.req.query("revision"));
   if (!revision.success) return c.json({ error: "Choose an export revision." }, 400);
-  const file = Bun.file(join(projectExportDir(project.id), revision.data + ".mp4"));
-  if (!(await file.exists())) return c.json({ error: "Export not found." }, 404);
-  return new Response(file, { headers: { "Content-Type": "video/mp4", "Cache-Control": "private, no-store",
-    "Content-Disposition": 'attachment; filename="cutroom.mp4"; filename*=UTF-8\'\'' + encodeURIComponent(project.title + ".mp4").replaceAll("'", "%27") } });
+  const target = { ownerId: c.get("ownerId"), projectId: c.req.param("id"), revision: revision.data };
+  try {
+    const version = await completedVersion(target);
+    return await streamOutput(version, version.attempt, c.req.raw, true);
+  } catch (e) {
+    if (!(e instanceof ExportError) || e.status !== 404) throw e;
+    const p = z.uuid().safeParse(target.projectId).success && await getProject(target.projectId, target.ownerId);
+    if (!p) throw e;
+    const file = join(projectExportDir(p.id), revision.data + ".mp4");
+    if (!await Bun.file(file).exists()) throw e;
+    return serveLocalFile(file, new Headers({ "Content-Type": "video/mp4", "Cache-Control": "private, no-store",
+      "Content-Disposition": "attachment; filename=\"cutroom.mp4\"; filename*=UTF-8''" + encodeURIComponent(p.title + ".mp4").replaceAll("'", "%27") }), c.req.header("Range"));
+  }
+});
+
+projectExports.get("/:id/exports", async c => {
+  const offset = number.safeParse(Number(c.req.query("offset") ?? 0));
+  if (!offset.success) return c.json({ error: "Invalid page." }, 400);
+  return c.json(await listExports({ projectId: c.req.param("id"), ownerId: c.get("ownerId") }, offset.data));
+});
+projectExports.get("/:id/exports/:exportId", async c => c.json(await getExport({ ownerId: c.get("ownerId"), projectId: c.req.param("id"), exportId: c.req.param("exportId") })));
+projectExports.get("/:id/exports/:exportId/file", async c => {
+  const v = await completedVersion({ ownerId: c.get("ownerId"), projectId: c.req.param("id"), exportId: c.req.param("exportId") });
+  return streamOutput(v, v.attempt, c.req.raw, true);
+});
+projectExports.delete("/:id/exports/:exportId", async c => {
+  const n = z.coerce.number().int().positive().safeParse(c.req.query("attempt"));
+  if (!n.success) return c.json({ error: "Choose an export attempt." }, 400);
+  return c.json(await changeAttempt({ ownerId: c.get("ownerId"), projectId: c.req.param("id"), exportId: c.req.param("exportId") }, "cancel", n.data));
+});
+projectExports.post("/:id/exports/:exportId/retry", async c => {
+  const n = z.strictObject({ attempt: z.int().positive() }).safeParse(await c.req.json().catch(() => null));
+  if (!n.success) return c.json({ error: "Choose an export attempt." }, 400);
+  return c.json(await changeAttempt({ ownerId: c.get("ownerId"), projectId: c.req.param("id"), exportId: c.req.param("exportId") }, "retry", n.data.attempt));
+});
+projectExports.on(["POST", "DELETE"], "/:id/exports/:exportId/share", async c => c.json(await changeShare({
+  ownerId: c.get("ownerId"), projectId: c.req.param("id"), exportId: c.req.param("exportId"),
+}, c.req.method === "POST")));
+
+publicWatch.use("*", async (c, next) => {
+  c.header("Cache-Control", "private, no-store");
+  c.header("Referrer-Policy", "no-referrer");
+  c.header("X-Robots-Tag", "noindex, nofollow, noarchive");
+  await next();
+});
+publicWatch.onError((e, c) => c.json({ error: "This watch link is unavailable." }, e instanceof ExportError && e.status === 404 ? 404 : 503));
+publicWatch.get("/:token", async c => {
+  const v = await completedVersion({ token: c.req.param("token") });
+  return c.json({ title: v.title, revision: v.revision });
+});
+publicWatch.get("/:token/media", async c => {
+  const v = await completedVersion({ token: c.req.param("token") });
+  return streamOutput(v, v.attempt, c.req.raw, false);
 });

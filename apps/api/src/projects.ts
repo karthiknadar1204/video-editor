@@ -1,4 +1,4 @@
-import { createEmptyTimeline, canvasFormats, editSchema, EditError } from "@editor/timeline";
+import { createEmptyTimeline, canvasFormats, editSchema, EditError, isReviewOperation } from "@editor/timeline";
 import { and, desc, eq, gt } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -9,6 +9,7 @@ import { project, session as sessions } from "./db/schema";
 import { getProject, HistoryError, saveEdit } from "./history";
 import { assets } from "./assets";
 import { analysisRoutes } from "./analysis-routes";
+import { roughCutRoutes } from "./rough-cut-routes";
 import { projectExports } from "./project-export";
 import { runs } from "./codex-runs";
 import { connections } from "./codex-access";
@@ -33,6 +34,7 @@ projects.use("*", async (c, next) => {
 });
 
 projects.route("/", analysisRoutes);
+projects.route("/", roughCutRoutes);
 projects.route("/", assets);
 projects.route("/", connections);
 projects.route("/", runs);
@@ -69,6 +71,7 @@ projects.post("/:id/edits", async c => {
   if (!id.success) return c.json({ error: "Project not found." }, 404);
   const command = editSchema.safeParse(await c.req.json().catch(() => null));
   if (!command.success) return c.json({ error: "Invalid edit request." }, 400);
+  if (command.data.kind === "edit" && command.data.operations.some(isReviewOperation)) return c.json({ error: "Apply this candidate from its saved review." }, 422);
   try {
     return c.json(await saveEdit(id.data, c.get("ownerId"), command.data));
   } catch (error) {
