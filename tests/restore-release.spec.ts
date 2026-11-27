@@ -22,7 +22,10 @@ test("an editor can reopen and export the legacy project from the restored stagi
   expect(saved).toMatchObject({ revision: 0, title: "Release rehearsal", timeline: { width: 640, height: 360 } });
   expect(saved.timeline.clips).toEqual(expect.arrayContaining([expect.objectContaining({ id: "legacy-shot", sourceStart: 30 }), expect.objectContaining({ text: "Archive" })]));
   const link = page.getByRole("link", { name: /Download MP4/ });
-  if (!await link.count()) await page.getByRole("button", { name: /Export MP4/ }).click();
+  const versions = await page.request.get("/api/projects/" + id + "/exports");
+  await expect(versions).toBeOK();
+  const existing = (await versions.json()).items.find((version: { revision: number }) => version.revision === saved.revision);
+  if (!existing) await page.getByRole("button", { name: /Export MP4/ }).click();
   await expect(link).toBeVisible({ timeout: 120_000 });
   const url = await link.getAttribute("href");
   const metadata = await page.evaluate(async src => {
