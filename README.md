@@ -1,6 +1,6 @@
 # Cutroom
 
-A browser-based video editor built with Next.js, Hono, Bun, and Remotion. Create a private project in one of three canvas formats, or try the public Apollo 8 preview and MP4 export.
+A browser-based video editor built with Next.js, Hono, Bun, and Remotion. Edit footage, audio, titles, and captions on a private timeline. Every saved change can be undone or redone across sessions. The public Apollo 8 sample also supports MP4 export.
 
 ## Run locally
 
@@ -42,6 +42,8 @@ Next.js forwards `/api` to Hono on port 4000 in development and in the productio
 | `/api/auth/*` | Standard Better Auth routes for verification, sign-in, sign-out, sessions, and password reset. |
 | `GET /api/projects` and `POST /api/projects` | List the current owner’s projects or create an empty one. |
 | `GET /api/projects/:id` | Read one saved timeline. Another owner’s ID returns 404. |
+| `POST /api/projects/:id/edits` | Save a group of timeline edits, undo, or redo against an expected revision. |
+| `GET /api/projects/:id/events` | Subscribe to saved revisions in the owner's open editor. |
 | `POST /api/export` and `GET /api/export` | Render the public sample and download the completed MP4. |
 
 ## Commands
@@ -56,12 +58,13 @@ Next.js forwards `/api` to Hono on port 4000 in development and in the productio
 | `bun run db:generate --name change_name` | Generate a SQL migration after changing the Drizzle schema. Review and commit the SQL and snapshots. |
 | `bun run db:migrate` | Apply pending migrations using the supplied `MIGRATION_DATABASE_URL`. |
 | `bun run test:migrations` | Reopen a saved project across schema versions in a disposable local database. |
+| `bun run test:timeline` | Check frame boundaries, linked clips, ripple edits, and inverse changes. |
 | `bunx playwright install chromium` then `bun run test` | Run the browser suite with Compose running. It starts isolated servers on ports 3100 and 4100, migrates `cutroom_test`, and writes exports to `.renders/test`. |
 | `E2E_PRODUCTION=1 bun run test` | Run the same suite against a production build. GitHub Actions runs this and the migration check on pushes and pull requests. |
 
 To use an existing installation of Google Chrome for the test, set `TEST_BROWSER_CHANNEL=chrome`. To supply a worker browser on a machine with restricted downloads, set `REMOTION_BROWSER_EXECUTABLE` to its executable. If you change Hono’s port, set `API_PORT` for Hono and `API_ORIGIN` for Next.js before development startup or production build.
 
-The fixture transcript, cut timing, and initial measurements are in the [Phase 1 verification notes](docs/first-render.md). The [implementation plan](docs/implementation-plan.md) describes the later editing and agent milestones.
+The [timeline guide](docs/timeline.md) covers editing controls, frame rules, saving, and verification. See the [Phase 1 verification notes](docs/first-render.md) for the public sample and the [implementation plan](docs/implementation-plan.md) for later editing and agent milestones.
 
 ## Hosted configuration
 

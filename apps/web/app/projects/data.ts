@@ -3,10 +3,6 @@ import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 
 export const summary = z.object({ id: z.uuid(), title: z.string(), updatedAt: z.string() });
-export const details = z.object({
-  id: z.uuid(), title: z.string(),
-  timeline: z.object({ width: z.number(), height: z.number(), fps: z.number(), durationInFrames: z.number() }),
-});
 
 export async function readProjects<T>(path: string, schema: z.ZodType<T>): Promise<T> {
   const cookie = (await cookies()).toString();

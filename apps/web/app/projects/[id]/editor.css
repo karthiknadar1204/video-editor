@@ -1,0 +1,39 @@
+.project-editor { max-width: 1440px; }
+.project-editor h1 { font-size: clamp(32px, 4vw, 54px); overflow-wrap: anywhere; }
+.editor-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(265px, 31%); gap: 18px; align-items: start; }
+.editor-preview, .inspector, .cut-timeline { background: #202322; border: 1px solid #414742; border-radius: 8px; overflow: hidden; }
+.monitor { display: grid; place-items: center; min-height: 190px; background: #101210; }
+.empty-monitor { background: #070907; color: #a2aaa0; display: grid; place-items: center; font-size: 13px; }
+.inspector, .cut-timeline { padding: 18px; }
+.cut-timeline { margin-top: 18px; }
+.editor-toolbar, .history-buttons, .edit-status { display: flex; align-items: center; gap: 8px; }
+.editor-toolbar { justify-content: space-between; min-height: 30px; }
+.editor-toolbar h2 { margin: 0; }
+.editor-toolbar button, .edit-status button, .lane-label button { background: #2b302c; color: inherit; border: 1px solid #50594e; border-radius: 5px; padding: 5px 9px; font-size: 12px; }
+.project-editor button:disabled { opacity: .45; cursor: default; }
+.form-wrap { padding: 0; border: 0; margin: 12px 0 0; min-width: 0; }
+.clip-fields { display: grid; gap: 12px; }
+.clip-fields label { display: grid; gap: 5px; color: #c7cfc5; font-size: 12px; }
+.clip-fields input, .clip-fields select, .editor-preview input { min-width: 0; width: 100%; background: #181b18; color: #eeefeb; font: inherit; border: 1px solid #50584f; border-radius: 5px; padding: 8px; }
+.clip-fields select, .lane-label strong, .ripple-tracks label { text-transform: capitalize; }
+.field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.clip-fields .action { justify-content: center; }
+.clip-meta, .edit-status { color: #b6bfb3; font-size: 12px; line-height: 1.6; }
+.clip-meta { margin: 0; }
+.edit-status { min-height: 32px; flex-wrap: wrap; margin: 4px 0 8px; }
+.ripple-tracks { display: flex; flex-wrap: wrap; gap: 8px; border: 1px solid #50584f; }
+.clip-fields .tick { display: flex; align-items: center; gap: 6px; }
+.tick input { width: auto; }
+.editor-preview input { width: 72px; padding: 4px 6px; margin-left: 4px; }
+.track-row { display: grid; grid-template-columns: 122px minmax(0, 1fr); gap: 10px; padding: 4px 0; border-top: 1px solid #353b36; }
+.lane-label { display: flex; align-items: center; justify-content: space-between; gap: 4px; font-size: 12px; }
+.lane-label button { padding: 3px 5px; font-size: 10px; }
+.lane-label button[aria-pressed=true] { color: #d7f69b; }
+.lane { position: relative; min-height: 33px; background: #171a17; }
+.lane button { position: absolute; inset-block: 2px; border-radius: 4px; border: 1px solid #63765e; background: #354732; color: #e8f1e5; font-size: 11px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; }
+.lane button[aria-pressed=true] { border-color: #d7f69b; background: #465f3e; }
+@media (max-width: 720px) {
+  .editor-workspace { grid-template-columns: minmax(0, 1fr); }
+  .track-row { grid-template-columns: 89px minmax(0, 1fr); }
+  .inspector, .cut-timeline { padding: 12px; }
+}
