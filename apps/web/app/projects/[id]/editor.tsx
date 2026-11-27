@@ -21,7 +21,7 @@ function timecode(frame: number, fps: number) {
 }
 
 export function Editor({ initial }: { initial: ProjectSnapshot }) {
-  const { project, save, status, message, retry, reload, syncAssets, markDirty, clearDraft, formVersion, hasDraft, online } = useTimeline(initial);
+  const { project, save, reviewEdit, status, message, retry, reload, syncAssets, markDirty, clearDraft, formVersion, hasDraft, online } = useTimeline(initial);
   const { timeline, revision } = project;
   const { width, height, fps } = timeline;
   const [preview, setPreview] = useState<Timeline | null>(null);
@@ -106,11 +106,11 @@ export function Editor({ initial }: { initial: ProjectSnapshot }) {
     </header>
     <div className="edit-status" role="status"><span className="save-indicator" data-saved={editable && online && !hasDraft} />
       <span>Revision {revision}</span><span aria-hidden="true">·</span>
-      {status === "conflict" ? <><span>Another edit was saved. Load the latest revision to continue.</span><button onClick={() => void reload()}>Load latest</button></> :
+      {status === "conflict" || status === "unsynced" ? <><span>{status === "conflict" ? "Another edit was saved. Load the latest revision to continue." : "Load the latest revision to confirm the review change."}</span><button onClick={() => void reload()}>Load latest</button></> :
         <>{message || (status === "opening" ? "Opening editor…" : status === "saving" ? "Saving…" : [!online && "Offline", hasDraft && "Unsaved changes"].filter(Boolean).join(" · ") || "Saved")}
           {status === "retry" && <button onClick={() => void retry()}>Retry save</button>}
           {editable && hasDraft && <button onClick={() => { clearDraft(); resetForm(n => n + 1); }}>Discard draft</button>}</>}
-      <RoughCutReview project={project} selected={selected} editable={saved} onChange={reload} />
+      <RoughCutReview project={project} selected={selected} editable={saved} onEdit={reviewEdit} />
     </div>
     <nav className="mobile-panels" aria-label="Studio panels">{["Timeline", "Assistant"].map(tab =>
       <button key={tab} aria-pressed={mobileTab === tab.toLowerCase()} onClick={() => setMobileTab(tab.toLowerCase())}>{tab}</button>)}</nav>

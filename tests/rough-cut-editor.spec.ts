@@ -308,10 +308,24 @@ test("rough-cut review plays both takes, restores a passage and exports the sele
   await page.getByRole("button", { name: /Open rough-cut review/ }).click();
   await box.getByRole("button", { name: "Undo this edit" }).click();
   await expect.poll(async () => (await read()).timeline).toEqual(saved.timeline);
-  await box.getByRole("button", { name: "Undo this edit" }).click();
-  await expect.poll(async () => (await read()).timeline).toEqual(original.timeline);
-  await box.getByRole("button", { name: "Close rough-cut review" }).click();
-  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  const undoReview = box.getByRole("button", { name: "Undo this edit" });
+  await expect(undoReview).toBeEnabled();
+  // Delay the editor's snapshot after the next undo to reproduce dismissing the review on a slow connection.
+  let releaseSnapshot!: () => void;
+  const snapshot = new Promise<void>(resolve => { releaseSnapshot = resolve; });
+  const route = new URL(base, webOrigin).href;
+  await page.route(route, async request => { await snapshot; await request.continue(); });
+  const redo = page.getByRole("button", { name: "Redo", exact: true });
+  try {
+    await undoReview.click();
+    await expect.poll(async () => (await read()).timeline).toEqual(original.timeline);
+    await box.getByRole("button", { name: "Close rough-cut review" }).click();
+    await expect(redo).toBeDisabled();
+  } finally {
+    releaseSnapshot();
+    await page.unroute(route);
+  }
+  await redo.click();
   await expect.poll(async () => (await read()).timeline).toEqual(saved.timeline);
   await page.getByRole("button", { name: "Redo", exact: true }).click();
   await expect.poll(async () => (await read()).timeline).toEqual(restored.timeline);

@@ -51,8 +51,10 @@ test("a private speech recording becomes searchable, and recovery keeps the orig
   await review.getByRole("button", { name: "Preview rough cut" }).click();
   await expect(review.getByRole("button", { name: "Apply rough cut" })).toBeVisible();
   expect((await read()).revision).toBe(inserted.revision);
+  const committed = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/commit"));
   await review.getByRole("button", { name: "Apply rough cut" }).click();
-  await expect.poll(async () => (await read()).revision).toBe(inserted.revision + 1);
+  expect((await committed).status()).toBe(200);
+  expect((await read()).revision).toBe(inserted.revision + 1);
   const captions = (await read()).timeline.clips.filter(c => c.kind === "text" && c.track === "caption");
   expect(captions.length).toBeGreaterThan(0);
   for (const cue of captions) {

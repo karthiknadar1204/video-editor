@@ -52,12 +52,12 @@ export function RoughCutReview({
   project,
   selected,
   editable,
-  onChange,
+  onEdit,
 }: {
   project: ProjectSnapshot;
   selected?: Clip;
   editable: boolean;
-  onChange: () => Promise<void>;
+  onEdit: <T>(write: () => Promise<T>) => Promise<T>;
 }) {
   const base = "/api/projects/" + project.id + "/rough-cuts";
   const [recent, setRecent] = useState<Summary>();
@@ -90,7 +90,7 @@ export function RoughCutReview({
           initialId={recent?.id}
           project={project}
           selected={selected}
-          onChange={onChange}
+          onEdit={onEdit}
           onClose={() => setOpen(false)}
         />
       )}
@@ -103,14 +103,14 @@ function ReviewDialog({
   initialId,
   project,
   selected,
-  onChange,
+  onEdit,
   onClose,
 }: {
   base: string;
   initialId?: string;
   project: ProjectSnapshot;
   selected?: Clip;
-  onChange: () => Promise<void>;
+  onEdit: <T>(write: () => Promise<T>) => Promise<T>;
   onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -199,12 +199,11 @@ function ReviewDialog({
   async function change(action: "commit" | "restore" | "undo") {
     if (!review) return;
     const revision = action === "commit" ? review.baseRevision : project.revision;
-    const result = await api(base + "/" + review.id + "/" + action, {
+    const result = await onEdit(() => api(base + "/" + review.id + "/" + action, {
       expectedRevision: revision,
       ...(action === "restore" ? { cutId } : {}),
       ...(action !== "commit" ? { requestId: getId([review.id, action, cutId, revision].join("/")) } : {}),
-    });
-    await onChange();
+    }));
     await load(result?.review?.id ?? review.id);
     if (result?.rebased) setNote("The sequence changed. Review the recalculated candidate before applying it.");
   }

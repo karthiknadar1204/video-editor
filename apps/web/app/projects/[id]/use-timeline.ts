@@ -13,7 +13,7 @@ export function useTimeline(initial: ProjectSnapshot) {
   const [online, setOnline] = useState(true);
   const sending = useRef(false);
   const pending = useRef<EditRequest | null>(null);
-  const [status, setStatus] = useState<"opening" | "ready" | "saving" | "retry" | "conflict">("opening");
+  const [status, setStatus] = useState<"opening" | "ready" | "saving" | "retry" | "conflict" | "unsynced">("opening");
   const [message, setMessage] = useState("");
   const [formVersion, setFormVersion] = useState(0);
 
@@ -99,11 +99,29 @@ export function useTimeline(initial: ProjectSnapshot) {
       setStatus("retry");
       setMessage(editLabel(command) + " could not be confirmed. Retry to check this exact edit.");
       return false;
+    } finally { finishSave(); }
+  }
+
+  function finishSave() {
+    sending.current = false;
+    if (!pending.current && notified.current > revision.current) {
+      void refresh().catch(() => setMessage("Could not sync the timeline. Reload to reconnect."));
+    }
+  }
+
+  async function reviewEdit<T>(write: () => Promise<T>) {
+    if (sending.current || pending.current || dirty.current || status !== "ready") throw new Error("Finish the current edit first.");
+    sending.current = true;
+    setStatus("saving");
+    setMessage("");
+    try {
+      return await write();
     } finally {
-      sending.current = false;
-      if (!pending.current && notified.current > revision.current) {
-        void refresh().catch(() => setMessage("Could not sync the timeline. Reload to reconnect."));
-      }
+      try { await refresh(true); }
+      catch {
+        setStatus("unsynced");
+        throw new Error("Load the latest revision to confirm the review change.");
+      } finally { finishSave(); }
     }
   }
 
@@ -113,7 +131,7 @@ export function useTimeline(initial: ProjectSnapshot) {
     return submit(typeof action === "string" ? { ...base, kind: action } : { ...base, kind: "edit", operations: action });
   }
 
-  return { project, status, message, save, formVersion, hasDraft, online, syncAssets: refresh,
+  return { project, status, message, save, reviewEdit, formVersion, hasDraft, online, syncAssets: refresh,
     markDirty: () => { dirty.current = true; setHasDraft(true); },
     clearDraft: () => { dirty.current = false; setHasDraft(false); },
     retry: () => pending.current && submit(pending.current),
