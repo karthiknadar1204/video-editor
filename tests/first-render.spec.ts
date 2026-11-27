@@ -43,6 +43,10 @@ test("preview, export and download the ten-second sequence", async ({ page }, in
   const [file] = await Promise.all([page.waitForEvent("download"), download.click()]);
   expect(file.suggestedFilename()).toBe("earthrise.mp4");
   expect(await file.failure()).toBeNull();
+  const range = await page.request.get("/api/export", { headers: { Range: "bytes=0-31" } });
+  expect(range.status()).toBe(206);
+  expect(range.headers()["content-range"]).toMatch(/^bytes 0-31\//);
+  expect((await range.body()).byteLength).toBe(32);
 
   const media = await page.evaluate(async ({ before, after }) => {
     const bytes = await (await fetch("/api/export")).arrayBuffer();

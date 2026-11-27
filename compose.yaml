@@ -1,24 +1,21 @@
 services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: cutroom_owner
-      POSTGRES_PASSWORD: local-owner
-      POSTGRES_DB: cutroom
+  redis:
+    image: redis:7.4-alpine
+    command: redis-server --appendonly yes --maxmemory-policy noeviction
     ports:
-      - "127.0.0.1:55432:5432"
+      - "127.0.0.1:6379:6379"
     volumes:
-      - cutroom_data:/var/lib/postgresql/data
-      - ./apps/api/src/db/local.sql:/docker-entrypoint-initdb.d/local.sql:ro
+      - redis-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cutroom_owner -d cutroom"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 2s
-      timeout: 5s
-      retries: 20
+      timeout: 2s
+      retries: 15
   mail:
     image: axllent/mailpit:v1.34.0
     ports:
       - "127.0.0.1:1025:1025"
       - "127.0.0.1:8025:8025"
+
 volumes:
-  cutroom_data:
+  redis-data:

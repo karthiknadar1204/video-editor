@@ -21,7 +21,7 @@ Use one account owner per project for the first release. Start with 30 fps, a fi
 | Neon Postgres and Drizzle | Store the saved timeline, revisions, credentials, edit history, conversations, and job records. Check schema changes into Git as migrations. |
 | ImageKit | Store and deliver footage, thumbnails, and finished videos. Keep stable file identifiers in Postgres. Generate private delivery URLs when a browser or worker needs them. |
 | Private Codex runner | Use Codex app-server for a persistent in-app conversation, streamed replies, and Stop. Give the runner project-scoped access to the Hono MCP endpoint. |
-| Remotion and background workers | Use one composition for the browser preview, Codex's frame checks, and final rendering. Use Trigger.dev for jobs. Run Chrome, FFmpeg, and speech analysis in workers with their required native dependencies. |
+| Remotion and background workers | Use one composition for the browser preview, Codex's frame checks, and final rendering. Dispatch jobs with BullMQ on Redis. Run Chrome, FFmpeg, and speech analysis in workers with their required native dependencies. |
 
 **A manual edit** starts in Next.js. The browser previews the change immediately. Hono checks the operation and saves one project revision. Other open editors receive that revision.
 
@@ -128,7 +128,7 @@ Design the screen around the moment a creator asks for an edit and then checks i
 ## Phase 8. Export, download, and share the chosen version
 
 1. Finish pending saves before export. Capture the timeline revision, asset versions, font versions, composition version, and export settings. Hold those assets while the export needs them.
-2. Record the export and its job request durably. Dispatch it with a stable idempotency key. If dispatch fails after the database save, a retry must pick up the pending request. Expose start and status through both the editor and MCP. [Trigger.dev idempotency](https://trigger.dev/docs/idempotency)
+2. Record the export and its job request durably. Dispatch it with a stable idempotency key. If dispatch fails after the database save, a retry must pick up the pending request. Expose start and status through both the editor and MCP. [BullMQ job IDs](https://docs.bullmq.io/guide/jobs/job-ids)
 3. Render an H.264 MP4 with audio using the shared composition. Report queued, rendering, uploading, completed, failed, and cancelled states. Handle races between completion and cancellation. Record one final state per attempt.
 4. Publish the output only after upload succeeds. Add progress, cancel, retry, download, and export history. Retry transient errors against the original snapshot. Report missing source media with the asset name.
 5. Create a revocable link to one completed export. Authorize playback separately from project editing. Start with MP4 playback. Add adaptive streaming when multiple playback qualities are needed. Bound the lifetime of any media URL already issued when a link is revoked.

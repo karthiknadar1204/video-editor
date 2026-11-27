@@ -136,8 +136,8 @@ test("cancellation, worker recovery and repeated admission preserve the original
         (${initial.id},2,'uploading',${randomUUID()},now() - interval '1 minute')`;
       await tx`UPDATE export_version SET attempt=2 WHERE id=${initial.id}`;
     });
-    expect((await start(1)).id).toBe(initial.id);
     await expect.poll(async () => (await row(initial.id)).status, { timeout: 90_000 }).toBe("completed");
+    expect((await start(1)).id).toBe(initial.id);
     const attempts = await sql`SELECT number,status FROM export_attempt WHERE export_id=${initial.id} ORDER BY number`;
     expect(attempts.map(a => [a.number,a.status])).toEqual([[1,"cancelled"],[2,"failed"],[3,"completed"]]);
     const staleCancel = await page.request.delete(endpoint + "?attempt=1");

@@ -4,7 +4,7 @@ A browser-based video editor built with Next.js, Hono, Bun, and Remotion. Ask Co
 
 ## Run locally
 
-Use Bun 1.3.3, Node 22.19.0, Docker Compose, and FFmpeg 6 or later (including ffprobe). On first setup, start PostgreSQL and the local mail inbox from the repository root.
+Use Bun 1.3.3, Node 22.19.0, Docker Compose, and FFmpeg 6 or later (including ffprobe). Use Neon for Postgres. Docker Compose starts Redis and the Mailpit inbox on loopback.
 
 ```sh
 bun install --frozen-lockfile
@@ -13,12 +13,14 @@ cp -n apps/api/.env.example apps/api/.env.local
 openssl rand -hex 32
 ```
 
-Paste the generated value into `BETTER_AUTH_SECRET` in `apps/api/.env.local`. Then migrate the development database and start the app.
+Paste the generated value into `BETTER_AUTH_SECRET` in `apps/api/.env.local`. Set `DATABASE_URL` to the pooled Neon application-role URL in that file. Put the direct Neon owner URL in `apps/api/.env.migrations.local` as `MIGRATION_DATABASE_URL`. Both files are ignored by Git.
 
 ```sh
-MIGRATION_DATABASE_URL=postgresql://cutroom_owner:local-owner@127.0.0.1:55432/cutroom bun run db:migrate
+bun run db:migrate
 bun run dev
 ```
+
+In a second terminal, run `bun run worker`. Keep it running for uploads, previews and exports.
 
 Open [My projects](http://127.0.0.1:3000/projects), create an account, and follow the verification link in [Mailpit](http://127.0.0.1:8025). Choose **New project**, enter a title, and pick a horizontal, vertical, or square canvas. Your empty timeline is saved immediately. Sign-out and password reset are available from the workspace and sign-in screens.
 
@@ -54,21 +56,28 @@ Next.js forwards `/api` to Hono on port 4000 in development and in the productio
 | `/watch/:token` | Play one completed export. The page and its media requests check the current link authorization. |
 | `POST /api/export` and `GET /api/export` | Render the public sample and download the completed MP4. |
 
+### Background jobs
+
+Hono records private edit or media state in Neon and adds the job ID to BullMQ. Redis listens on `127.0.0.1:6379` by default. The worker takes the job, fetches its inputs, and saves the result. New workers also recover pending requests from Neon if dispatch was interrupted.
+
+Keep Redis on a private interface with append-only persistence and the `noeviction` policy. The included Compose service sets both. Give the API and worker the same `REDIS_URL` and `REDIS_PREFIX`. Use a different prefix for each environment. Keep the worker’s release bundles on persistent storage for retries. When using filesystem media storage, the API and worker need the same media and render directories.
+
 ## Commands
 
 | Command | Result |
 | --- | --- |
-| `bun run dev` | Start Next.js and Hono together. |
+| `bun run dev` | Start Next.js, Hono and the private Codex runner. |
 | `bun run --cwd apps/web dev` or `bun run --cwd apps/api dev` | Start either development process on its own. |
+| `bun run worker` | Start the BullMQ media worker. It uses the same Neon database and Redis queue as Hono. |
 | `bun run render` | Run the worker once and write the MP4 under `.renders/`. |
 | `bun run typecheck` | Check the apps, shared packages, and tests. |
 | `bun run build` followed by `bun run start` | Run the production Next.js build with Hono. |
 | `bun run db:generate --name change_name` | Generate a SQL migration after changing the Drizzle schema. Review and commit the SQL and snapshots. |
 | `bun run db:migrate` | Apply pending migrations using the supplied `MIGRATION_DATABASE_URL`. |
-| `bun run test:migrations` | Reopen a saved project across schema versions in a disposable local database. |
+| `bun run test:migrations` | Reopen a saved project across schema versions in a disposable Neon test database. |
 | `bun run test:timeline` | Check frame boundaries, linked clips, ripple edits, and inverse changes. |
-| `bunx playwright install chromium` then `bun run test` | Run the browser suite with Compose running. It starts isolated servers on ports 3100 and 4100, migrates `cutroom_test`, and writes exports to `.renders/test`. |
-| `E2E_PRODUCTION=1 bun run test` | Run the same suite against a production build. GitHub Actions runs this and the migration check on pushes and pull requests. |
+| `bunx playwright install chromium` then `bun run test` | Run the browser suite with Redis and Mailpit running. Provide the Neon test connections in the ignored root `.env.e2e.local` using `E2E_DATABASE_URL` and `E2E_MIGRATION_DATABASE_URL`. The suite starts its own API, web, runner and worker. |
+| `E2E_PRODUCTION=1 bun run test` | Run the same suite on this machine against the production build and Neon test database. GitHub Actions runs the checks that do not require Neon credentials. |
 
 To use an existing installation of Google Chrome for the test, set `TEST_BROWSER_CHANNEL=chrome`. To supply a worker browser on a machine with restricted downloads, set `REMOTION_BROWSER_EXECUTABLE` to its executable. If you change Hono’s port, set `API_PORT` for Hono and `API_ORIGIN` for Next.js before development startup or production build.
 
@@ -80,9 +89,9 @@ See the [timeline guide](docs/timeline.md), [release verification and operating 
 
 Local development uses `CUTROOM_MEDIA_STORAGE=local` and stores files under `.local/media` outside the web root. `CUTROOM_MEDIA_DIR` can point to another private directory. The API host needs `ffmpeg` and `ffprobe` on its PATH, with H.264 and AAC encoding support.
 
-For hosted uploads, set `CUTROOM_MEDIA_STORAGE=imagekit`, `IMAGEKIT_PUBLIC_KEY`, `IMAGEKIT_PRIVATE_KEY`, and `IMAGEKIT_URL_ENDPOINT` on the API server. Use an ImageKit key with access to upload, read, list, and remove files in the project's media folder. The browser receives a ten-minute grant bound to a server-selected path, file size, and privacy settings. Hono verifies the uploaded file ID and path, decodes the original, and stores a seekable playback copy and a thumbnail. Owner-authorized delivery links expire after five minutes. The original is retained byte-for-byte for export. Configure the account to restrict unsigned media delivery. [ImageKit private media settings](https://imagekit.io/docs/media-delivery-basic-security)
+For hosted uploads, set `CUTROOM_MEDIA_STORAGE=imagekit`, `IMAGEKIT_PUBLIC_KEY`, `IMAGEKIT_PRIVATE_KEY`, and `IMAGEKIT_URL_ENDPOINT` on the API and media worker. Use an ImageKit key with access to upload, read, list, and remove files in the project's media folder. The browser receives a ten-minute grant bound to a server-selected path, file size, and privacy settings. The worker verifies the uploaded file ID and path, decodes the original, and stores a seekable playback copy and a thumbnail. Owner-authorized delivery links expire after five minutes. The original is retained byte-for-byte for export. Configure the account to restrict unsigned media delivery. [ImageKit private media settings](https://imagekit.io/docs/media-delivery-basic-security)
 
-Uploads support MP4, MOV, WebM, M4A, MP3, WAV, and Ogg, up to 64 MiB and one hour per asset. The provider's account limits also apply. Clips can use ready footage while source analysis runs. The API checks for abandoned uploads at startup and every fifteen minutes. Unfinished uploads expire after 24 hours.
+Uploads support MP4, MOV, WebM, M4A, MP3, WAV, and Ogg, up to 64 MiB and one hour per asset. The provider's account limits also apply. Clips can use ready footage while source analysis runs. The worker checks for abandoned uploads on startup and through a recurring BullMQ job. Unfinished uploads expire after 24 hours.
 
 The local browser suite tests a rotated MOV with real video decoding and byte-range reads. To verify a configured ImageKit account, run the following browser checks. They upload test footage, compare the downloaded original byte-for-byte, recover an interrupted edit, reopen the project in a mobile browser context, and render a private MP4.
 
@@ -92,7 +101,7 @@ E2E_LIVE_IMAGEKIT=1 bun --env-file=apps/api/.env.local run test tests/imagekit-l
 
 ### Inspect and search footage
 
-Install the pinned English speech model and native recognizer on the API host. The installer needs CMake and a C++ compiler. It verifies the model and source checksums and keeps the build outside Git. The worker guide records the versions, fixture and timing benchmark. [Worker setup and benchmark](apps/worker/README.md)
+Install the pinned English speech model and native recognizer on the media worker host. The installer needs CMake and a C++ compiler. It verifies the model and source checksums and keeps the build outside Git. The worker guide records the versions, fixture and timing benchmark. [Worker setup and benchmark](apps/worker/README.md)
 
 ```sh
 bun run --cwd apps/worker setup:whisper
@@ -132,6 +141,6 @@ env -u OPENAI_API_KEY E2E_LIVE_CODEX=1 bun --env-file=apps/runner/.env.local run
 
 ### Database and authentication
 
-The project uses separate Neon staging and production branches. Apply each migration to staging, verify it, then apply it to production. For each branch, give the migration job the direct `cutroom_owner` URL as `MIGRATION_DATABASE_URL`. Give the API the pooled `cutroom_app` URL as `DATABASE_URL`. The application role has table read/write access in `public`.
+The project uses separate Neon staging and production branches. Apply each migration to staging, verify it, then apply it to production. For each branch, give the migration job the direct `cutroom_owner` URL as `MIGRATION_DATABASE_URL`. Give the API and media worker the pooled `cutroom_app` URL as `DATABASE_URL`. The application role has table read/write access in `public`.
 
 Set the following separately in each hosted API's secret store. Use that environment’s HTTPS origin for `BETTER_AUTH_URL`, an independent random `BETTER_AUTH_SECRET`, a transactional provider's SMTP connection URL as `SMTP_URL`, and its verified sender as `MAIL_FROM`. Hosted mail uses TLS. Point Next.js's private `API_ORIGIN` at Hono when building and running the web service. Terminate HTTPS at the web ingress and have it supply the trusted client IP for per-client authentication rate limits.

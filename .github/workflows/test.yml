@@ -7,6 +7,12 @@ jobs:
   regression:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -16,12 +22,14 @@ jobs:
         with:
           bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
-      - run: docker compose up -d --wait
       - run: bun run typecheck
+      - run: bun run build
       - run: bun run test:timeline
       - run: bun test apps/runner/test
       - run: bun test apps/api/test/local-range.test.ts
-      - run: bun run test:migrations
+      - run: bun test apps/api/test/queue.test.ts
+        env:
+          REDIS_URL: redis://127.0.0.1:6379
       - name: Ensure FFmpeg and ffprobe are available
         run: |
           if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
@@ -38,15 +46,7 @@ jobs:
       - run: CUTROOM_TEST_WHISPER=1 bun test apps/worker/test
       - run: bunx playwright install --with-deps chromium
       - run: bun test packages/composition/test
-      - run: bun run test
-        env:
-          E2E_PRODUCTION: "1"
-          CUTROOM_TEST_WHISPER: "1"
-          CUTROOM_MEDIA_STORAGE: local
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: browser-failure-traces
-          path: test-results/**/trace.zip
-          retention-days: 3
-          if-no-files-found: ignore
+      - name: Report local integration checks
+        if: always()
+        run: |
+          echo 'Neon migrations and authenticated Playwright journeys run on the maintainer’s machine with its private `.env.e2e.local`.' >> "$GITHUB_STEP_SUMMARY"

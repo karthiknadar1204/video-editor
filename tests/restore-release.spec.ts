@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 import { mailLink, signIn } from "./accounts";
 
 test("an editor can reopen and export the legacy project from the restored staging backup", async ({ page, request }) => {
-  test.skip(!process.env.E2E_RESTORE_DB, "Requires an isolated copy of the pre-release staging backup.");
+  test.skip(process.env.E2E_RESTORE !== "1", "Requires E2E_DATABASE_URL and E2E_MIGRATION_DATABASE_URL for an isolated copy of the pre-release staging backup.");
   const email = "release-fixture@cutroom.test", password = "restored-" + randomUUID();
   await page.goto("/account?view=forgot");
   await page.getByLabel("Email").fill(email);

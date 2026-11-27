@@ -8,16 +8,17 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 import { readTimeline } from "@editor/timeline";
 
-// This test owns its scratch database on the local Compose cluster.
-const local = new URL("postgresql://cutroom_owner:local-owner@127.0.0.1:55432/postgres");
-const admin = postgres(local.href, { max: 1 });
+const connection = process.env.E2E_MIGRATION_DATABASE_URL;
+if (!connection) throw new Error("Set E2E_MIGRATION_DATABASE_URL to the direct owner connection on the isolated Neon test branch.");
+const admin = postgres(connection, { max: 1 });
 const name = "cutroom_upgrade_" + crypto.randomUUID().replaceAll("-", "");
 const folder = fileURLToPath(new URL("../migrations", import.meta.url));
 const previous = await mkdtemp(join(tmpdir(), "cutroom-upgrade-"));
 try {
   await admin`CREATE DATABASE ${admin(name)}`;
-  local.pathname = "/" + name;
-  const sql = postgres(local.href, { max: 1 });
+  const scratch = new URL(connection);
+  scratch.pathname = "/" + name;
+  const sql = postgres(scratch.href, { max: 1 });
   try {
     const journal = JSON.parse(await readFile(join(folder, "meta/_journal.json"), "utf8"));
     const first = journal.entries[0];
