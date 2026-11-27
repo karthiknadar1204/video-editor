@@ -6,18 +6,29 @@ export type Track = z.infer<typeof trackSchema>;
 export const frame = z.int().nonnegative();
 export const id = z.string().min(1).max(200);
 const coordinate = z.int().min(-10000).max(10000);
+export const fitSchema = z.enum(["cover", "contain"]);
+export const rotationSchema = z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]);
+const fontSize = z.int().min(8).max(400);
+const color = z.string().regex(/^#[0-9a-f]{6}$/i);
 const common = {
   id, start: frame, duration: z.int().positive(), linkId: id.nullable(),
   x: coordinate, y: coordinate,
 };
 export const clipSchema = z.discriminatedUnion("kind", [
   z.strictObject({ ...common, kind: z.literal("media"), track: z.enum(["video", "speech", "music"]),
-    assetId: id, sourceStart: frame, volume: z.number().min(0).max(1) }),
+    assetId: id, sourceStart: frame, volume: z.number().min(0).max(1), fit: fitSchema.optional(), rotation: rotationSchema.optional() }),
   z.strictObject({ ...common, kind: z.literal("text"), track: z.enum(["title", "caption"]),
-    text: z.string().trim().min(1).max(2000), fontSize: z.int().min(8).max(400), color: z.string().regex(/^#[0-9a-f]{6}$/i) }),
+    text: z.string().trim().min(1).max(2000), fontSize, color }),
 ]);
 export type Clip = z.infer<typeof clipSchema>;
-export const assetSchema = z.object({ id, name: z.string(), src: z.string(), duration: z.int().positive() });
+export const assetSchema = z.object({
+  id, name: z.string(), src: z.string(), duration: z.int().positive(),
+  metadata: z.object({
+    mediaType: z.enum(["video", "audio"]), width: frame, height: frame, rotation: z.number(),
+    hasAudio: z.boolean(), size: z.int().positive(), thumbnail: z.string().optional(),
+    transcript: z.enum(["not-started", "unavailable"]),
+  }).optional(),
+});
 export const timelineSchema = z.object({
   id, name: z.string(), width: z.int().positive(), height: z.int().positive(), fps: z.int().positive(),
   durationInFrames: frame, assets: z.array(assetSchema), clips: z.array(clipSchema), lockedTracks: z.array(trackSchema),
@@ -43,6 +54,8 @@ export const changeSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("rippleDelete"), id, tracks: z.array(trackSchema).max(tracks.length), cutId: id }),
   z.strictObject({ type: z.literal("text"), id, text: z.string().trim().min(1).max(2000) }),
   z.strictObject({ type: z.literal("position"), id, x: coordinate, y: coordinate }),
+  z.strictObject({ type: z.literal("framing"), id, fit: fitSchema, rotation: rotationSchema }),
+  z.strictObject({ type: z.literal("textStyle"), id, fontSize, color }),
   z.strictObject({ type: z.literal("volume"), id, volume: z.number().min(0).max(1) }),
   z.strictObject({ type: z.literal("lock"), track: trackSchema, locked: z.boolean() }),
   z.strictObject({ type: z.literal("link"), ids: z.array(id).min(2), linkId: id }),

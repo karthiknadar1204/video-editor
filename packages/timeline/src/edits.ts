@@ -31,6 +31,9 @@ function finish(t: Timeline): Timeline {
     if (c.kind === "media") {
       const asset = t.assets.find(a => a.id === c.assetId);
       if (!asset || c.sourceStart + c.duration > asset.duration) throw new EditError("Clip exceeds its source or references an unavailable asset.");
+      if (asset.metadata && (c.track === "video" ? asset.metadata.mediaType === "audio" : !asset.metadata.hasAudio)) {
+        throw new EditError("Choose a track that matches the streams in this asset.");
+      }
     }
     lastEnd.set(c.track, end(c));
     duration = Math.max(duration, end(c));
@@ -108,6 +111,16 @@ function apply(t: Timeline, op: Change) {
     selected.volume = op.volume;
     return;
   }
+  if (op.type === "framing") {
+    if (selected.kind !== "media" || selected.track !== "video") throw new EditError("Select a video clip to adjust framing.");
+    selected.fit = op.fit; selected.rotation = op.rotation;
+    return;
+  }
+  if (op.type === "textStyle") {
+    if (selected.kind !== "text") throw new EditError("Select a title or caption to change its style.");
+    selected.fontSize = op.fontSize; selected.color = op.color;
+    return;
+  }
   if (op.type === "position") {
     if (selected.track === "speech" || selected.track === "music") throw new EditError("Select a visual clip to position.");
     selected.x = op.x; selected.y = op.y;
@@ -153,7 +166,8 @@ function difference(before: Timeline, after: Timeline): Patch {
   return {
     put: after.clips.filter(c => {
       const prior = old.get(c.id);
-      return !prior || Object.entries(c).some(([key, value]) => Reflect.get(prior, key) !== value);
+      return !prior || Object.keys(c).length !== Object.keys(prior).length ||
+        Object.entries(c).some(([key, value]) => Reflect.get(prior, key) !== value);
     }),
     remove: before.clips.filter(c => !next.has(c.id)).map(c => c.id),
     lockedTracks: after.lockedTracks,

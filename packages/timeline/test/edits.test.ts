@@ -76,3 +76,15 @@ test("invalid source references, incompatible tracks, zero-length clips and nega
   expect(() => editTimeline(t, [{ type: "trim", id: "t", edge: "right", frame: 5 }])).toThrow();
   expect(() => editTimeline(t, [{ type: "move", id: "t", start: 1 }])).toThrow();
 });
+
+test("framing and type styling undo as one edit even for media saved before framing existed", () => {
+  const original = withClips(media("phone", 0, 90), title("intro", 0, 40));
+  const result = editTimeline(original, [
+    { type: "framing", id: "phone", fit: "contain", rotation: 90 },
+    { type: "textStyle", id: "intro", fontSize: 104, color: "#ff00aa" },
+  ]);
+  expect(result.timeline.clips).toMatchObject([{ rotation: 90, fit: "contain" }, { color: "#ff00aa", fontSize: 104 }]);
+  expect(applyPatch(result.timeline, result.inverse)).toEqual(original);
+  expect(applyPatch(original, result.forward)).toEqual(result.timeline);
+  expect(() => editTimeline(original, [{ type: "textStyle", id: "phone", fontSize: 50, color: "#ffffff" }])).toThrow();
+});
