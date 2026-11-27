@@ -3,13 +3,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "render": "node --import tsx src/render.ts"
+    "render": "node --import tsx src/render.ts",
+    "setup:whisper": "bun setup-whisper.ts",
+    "benchmark:speech": "bun benchmark-speech.ts"
   },
   "dependencies": {
     "@editor/composition": "workspace:*",
     "@editor/timeline": "workspace:*",
     "@remotion/bundler": "4.0.547",
     "@remotion/renderer": "4.0.547",
-    "tsx": "4.22.4"
+    "sharp": "0.35.5",
+    "tsx": "4.22.4",
+    "zod": "4.6.7"
   }
 }

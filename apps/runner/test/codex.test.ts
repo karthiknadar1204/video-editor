@@ -44,10 +44,23 @@ test("a real Codex subprocess receives only the project namespace and examines t
             revision: 2,
           },
           update_title: { clipId: "closing", revision: 3 },
-          render_frame: { jobId: "frame", revision: 3, frame: 30, status: "ready" },
+          render_frame: { kind: "committed_frame", jobId: "frame", revision: 3, frame: 30, status: "ready" },
+          search_transcript: {
+            revision: 2,
+            matches: [
+              {
+                assetId: "source",
+                text: "Earthrise",
+                startMs: 1000,
+                endMs: 2000,
+                placements: [{ startFrame: 30, endFrame: 60 }],
+              },
+            ],
+          },
+          inspect_source: { kind: "source_contact_sheet", assetId: "source", timestampsMs: [0, 1000] },
         };
         const content: object[] = [{ type: "text", text: JSON.stringify(values[params.name]) }];
-        if (params.name === "render_frame")
+        if (params.name === "render_frame" || params.name === "inspect_source")
           content.push({
             type: "image",
             mimeType: "image/png",
@@ -78,6 +91,18 @@ test("a real Codex subprocess receives only the project namespace and examines t
     expect(reply).toContain("inspected the saved frame");
     expect(activities).toContain("Checking a frame from the saved revision");
     expect(activities).toContain("Model received the rendered frame");
+    calls.length = 0;
+    activities.length = 0;
+    const review = await executeTurn(
+      { ...opts, prompt: 'Find "Earthrise" and compare the source contact sheet with its committed timeline frame.' },
+      model,
+    );
+    expect(calls).toEqual(["read_project", "search_transcript", "inspect_source", "render_frame"]);
+    expect(review).toContain("1000–2000 ms in the source");
+    expect(activities.filter((s) => s.startsWith("Model received"))).toEqual([
+      "Model received the source contact sheet",
+      "Model received the rendered frame",
+    ]);
     const obs = await (await fetch(fixture.url.origin + "/observations")).json();
     expect(obs.nativeImages).toBeGreaterThan(0);
     for (const seen of obs.toolsets)

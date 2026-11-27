@@ -2,7 +2,15 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { RunnerError } from "./client";
 
-export const toolNames = ["read_project", "list_assets", "inspect_selection", "update_title", "render_frame"] as const;
+export const toolNames = [
+  "read_project",
+  "list_assets",
+  "inspect_selection",
+  "update_title",
+  "render_frame",
+  "search_transcript",
+  "inspect_source",
+] as const;
 const toolName = z.enum(toolNames);
 const namespace = "mcp__cutroom";
 const declaration = z.object({
@@ -87,10 +95,44 @@ const event = (type: string, data: object) =>
 // The CLI also declares general computer tools. The provider accepts exactly one native MCP namespace,
 // and validates the complete upstream response before emitting any callable item back to the CLI.
 const nativeImage = z.object({ type: z.literal("input_image"), image_url: z.string().startsWith("data:image/") });
-const contentParts = z.object({ output: z.array(z.unknown()).optional(), content: z.array(z.unknown()).optional() });
+const imageTool = z.enum(["render_frame", "inspect_source"]);
+const imageCall = z.object({
+  type: z.literal("function_call"),
+  namespace: z.literal(namespace),
+  name: imageTool,
+  call_id: responseId,
+});
+const toolOutput = z.object({
+  type: z.literal("function_call_output"),
+  call_id: responseId,
+  output: z.array(z.unknown()),
+});
+type ImageTool = z.infer<typeof imageTool>;
+
+function imageReceipts(input: unknown[]) {
+  const tools = new Map<string, ImageTool>();
+  const received = new Map<string, ImageTool>();
+  for (const item of input) {
+    const call = imageCall.safeParse(item);
+    if (call.success) {
+      tools.set(call.data.call_id, call.data.name);
+      continue;
+    }
+    const result = toolOutput.safeParse(item);
+    if (!result.success) continue;
+    const tool = tools.get(result.data.call_id);
+    if (tool && result.data.output.some((part) => nativeImage.safeParse(part).success))
+      received.set(result.data.call_id, tool);
+  }
+  return received;
+}
 
 export function openProvider(options: {
-  baseUrl: string; apiKey: string; model: string; signal: AbortSignal; onImageReceived: () => void | Promise<void>;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  signal: AbortSignal;
+  onImageReceived: (tool: ImageTool) => void | Promise<void>;
 }) {
   const base = new URL(options.baseUrl);
   if (!(base.origin === "https://api.openai.com" || (base.hostname === "127.0.0.1" && base.protocol === "http:"))) {
@@ -98,7 +140,7 @@ export function openProvider(options: {
   }
   const key = crypto.randomUUID();
   let failure: RunnerError | undefined;
-  let imageReceived = false;
+  const acknowledged = new Set<string>();
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -147,12 +189,10 @@ export function openProvider(options: {
         });
         if (!upstream.ok) throw await serviceError(upstream);
         const reply = modelReply.parse(await upstream.json());
-        if (!imageReceived && data.input.some((item) => {
-          const parts = contentParts.safeParse(item);
-          return parts.success && (parts.data.output ?? parts.data.content ?? []).some(part => nativeImage.safeParse(part).success);
-        })) {
-          imageReceived = true;
-          await options.onImageReceived();
+        for (const [id, tool] of imageReceipts(data.input)) {
+          if (acknowledged.has(id)) continue;
+          acknowledged.add(id);
+          await options.onImageReceived(tool);
         }
         let output = event("response.created", { response: { id: reply.id } });
         for (const [index, item] of reply.output.entries()) {

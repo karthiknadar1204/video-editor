@@ -112,7 +112,52 @@ export function startFixture(port = 0) {
       if (prompt.includes("verify refused tool")) response = [call("read_project", {}), call("unregistered_tool", {})];
       else if (!calls.length) response = [call("read_project", {})];
       else if (!project) response = [final("Could not read the project.")];
-      else if (!calls.some((c) => c.name === "inspect_selection")) {
+      else if (/source contact sheet/i.test(prompt)) {
+        const hits = objectResult(result("search_transcript"));
+        const match = (
+          hits?.matches as
+            | {
+                assetId: string;
+                text: string;
+                startMs: number;
+                endMs: number;
+                placements: { startFrame: number; endFrame: number }[];
+              }[]
+            | undefined
+        )?.[0];
+        const source = objectResult(result("inspect_source"));
+        const edited = objectResult(result("render_frame"));
+        if (!calls.some((c) => c.name === "search_transcript")) {
+          const phrase = prompt.match(/["“]([^"”]+)["”]/)?.[1];
+          const assetId = prompt.match(/asset ([0-9a-f-]{36})/i)?.[1];
+          response = [call("search_transcript", { phrase, assetId })];
+        } else if (!match) response = [final("No matching source range was found.")];
+        else if (!calls.some((c) => c.name === "inspect_source"))
+          response = [call("inspect_source", { assetId: match.assetId })];
+        else if (source?.kind !== "source_contact_sheet" || !imageCount(result("inspect_source")))
+          response = [final("The source contact sheet is unavailable.")];
+        else if (edited?.kind === "committed_frame" && imageCount(result("render_frame")))
+          response = [
+            final(
+              "The source contact sheet shows the original footage. “" +
+                match.text +
+                "” spans " +
+                match.startMs +
+                "–" +
+                match.endMs +
+                " ms in the source. Its timeline placements are " +
+                match.placements.map((p) => p.startFrame + "–" + p.endFrame).join(", ") +
+                " frames. The committed timeline frame is frame " +
+                edited.frame +
+                " at revision " +
+                edited.revision +
+                ".",
+            ),
+          ];
+        else if (!match.placements.length || calls.filter((c) => c.name === "render_frame").length >= 6)
+          response = [final("The source range is available, but I could not inspect its edited frame.")];
+        else response = [call("render_frame", { revision: hits?.revision, frame: match.placements[0].startFrame })];
+      } else if (!calls.some((c) => c.name === "inspect_selection")) {
         const externalArgs = {
           clipId: prompt.match(/\bclip\s+([\w-]+)/i)?.[1],
           revision: project.revision,
@@ -143,7 +188,8 @@ export function startFixture(port = 0) {
           }),
         ];
       } else if (!receipt) response = [final("The title edit was rejected.")];
-      else if (images) response = [final("Changed the title to Behind the scenes and inspected the saved frame.")];
+      else if (imageCount(result("render_frame")))
+        response = [final("Changed the title to Behind the scenes and inspected the saved frame.")];
       else if (calls.filter((c) => c.name === "render_frame").length >= 6)
         response = [final("The title was saved, but I could not inspect the frame.")];
       else response = [call("render_frame", { revision: receipt.revision, frame })];

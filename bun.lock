@@ -60,7 +60,9 @@
         "@editor/timeline": "workspace:*",
         "@remotion/bundler": "4.0.547",
         "@remotion/renderer": "4.0.547",
+        "sharp": "0.35.5",
         "tsx": "4.22.4",
+        "zod": "4.6.7",
       },
     },
     "packages/composition": {

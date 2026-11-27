@@ -3,7 +3,8 @@ import { and, eq, lt, ne } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "./db/client";
-import { project, projectAsset } from "./db/schema";
+import { project, projectAsset, sourceAnalysis } from "./db/schema";
+import { analysisVersion, wakeAnalysisWorker } from "./analysis-worker";
 import { maxBytes, MediaError, originalName } from "./media";
 import { processUpload, removeAbandoned, serveAsset, storageMode, storeLocalOriginal, uploadTarget } from "./media-storage";
 
@@ -74,8 +75,10 @@ assets.post("/:assetId", async c => {
       if (!current) throw new MediaError("Project not found.", 404);
       const timeline = readTimeline(current.formatVersion, current.timeline);
       timeline.assets.push(asset);
+      await tx.insert(sourceAnalysis).values({ projectId: row.projectId, assetId: row.id, version: analysisVersion }).onConflictDoNothing();
       await tx.update(project).set({ timeline, formatVersion: 2, revision: current.revision + 1, updatedAt: new Date() }).where(eq(project.id, current.id));
     });
+    wakeAnalysisWorker();
     return c.json(asset);
   } catch (error) {
     await db.update(projectAsset).set({ state: "pending" }).where(and(byAsset(row), eq(projectAsset.state, "processing")));

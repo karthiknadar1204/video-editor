@@ -1,4 +1,4 @@
-import type { EditorContext, EditRequest, Patch, RunActivity, RunView, Timeline } from "@editor/timeline";
+import type { EditorContext, EditRequest, Patch, RunActivity, RunView, Timeline, TranscriptWord } from "@editor/timeline";
 import { bigint, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 const time = (name: string) => timestamp(name, { withTimezone: true });
@@ -123,3 +123,24 @@ export const frameJob = pgTable("frame_job", {
   timeline:jsonb().$type<Timeline>(), status:text({enum:["queued","running","ready","failed"]}).notNull().default("queued"),
   data:text(), error:text(), ...timestamps(),
 }, t => [unique().on(t.projectId,t.revision,t.frame), index().on(t.status,t.createdAt)]);
+
+export const sourceAnalysis = pgTable("source_analysis", {
+  projectId: uuid("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
+  assetId: text("asset_id").notNull(),
+  version: text().notNull(),
+  status: text({ enum: ["queued", "processing", "ready", "failed"] }).notNull().default("queued"),
+  leaseId: uuid("lease_id"),
+  leaseUntil: time("lease_until"),
+  originalWords: jsonb("original_words").$type<TranscriptWord[]>(),
+  sheet: text(),
+  timestampsMs: jsonb("timestamps_ms").$type<number[]>(),
+  createdAt: time("created_at").defaultNow().notNull(),
+}, t => [primaryKey({ columns: [t.projectId, t.assetId, t.version] }), index().on(t.version, t.status, t.createdAt)]);
+
+export const sourceTranscript = pgTable("source_transcript", {
+  projectId: uuid("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
+  assetId: text("asset_id").notNull(),
+  revision: integer().notNull(),
+  imported: jsonb().$type<TranscriptWord[]>(),
+  reviewed: jsonb().$type<TranscriptWord[]>(),
+}, t => [primaryKey({ columns: [t.projectId, t.assetId] })]);

@@ -1,7 +1,5 @@
-import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
-import { pipeline } from "node:stream/promises";
 import { rushes, sample, type Timeline } from "@editor/timeline";
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
@@ -12,7 +10,7 @@ import { getProject } from "./history";
 import { db } from "./db/client";
 import { projectAsset } from "./db/schema";
 import { originalName } from "./media";
-import { serveAsset } from "./media-storage";
+import { stageOriginal } from "./media-storage";
 import { AllowanceError, takeAllowance } from "./allowance";
 
 export async function renderSequence(write: (chunk: Uint8Array) => Promise<unknown>, job?: string, still?: { frame: number; signal: AbortSignal }) {
@@ -47,15 +45,8 @@ export async function prepareProject(job: string, projectId: string, timeline: T
     const [row] = assetId.success ? await db.select().from(projectAsset).where(and(eq(projectAsset.id, assetId.data),
       eq(projectAsset.projectId, projectId), eq(projectAsset.state, "ready"))) : [];
     if (!row) throw new Error("Unknown source for " + asset.name);
-    let response = await serveAsset(row, "original", undefined);
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      const target = new URL(response.headers.get("Location") ?? "");
-      if (target.protocol !== "https:") throw new Error("Invalid original media location.");
-      response = await fetch(target, { redirect: "error", signal: signal ?? AbortSignal.timeout(90_000) });
-    }
-    if (!response.ok || !response.body) throw new Error("Could not open the original media for " + asset.name);
     const filename = asset.id + extname(originalName(row.mime));
-    await pipeline(response.body, createWriteStream(join(job, "assets", filename), { flags: "wx", mode: 0o600 }), { signal });
+    await stageOriginal(row, join(job, "assets", filename), signal);
     assets.push({ ...asset, src: "imports/" + filename });
   }
   await writeFile(join(job, "timeline.json"), JSON.stringify({ ...timeline, assets }));

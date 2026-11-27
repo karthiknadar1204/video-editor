@@ -6,12 +6,15 @@ import { auth } from "./auth";
 import { projects } from "./projects";
 import { mcp } from "./mcp";
 import { wakeFrameWorker } from "./frames";
+import { wakeAnalysisWorker } from "./analysis-worker";
 
 const app = new Hono();
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/projects", projects);
 app.route("/api/mcp", mcp);
 wakeFrameWorker();
+wakeAnalysisWorker();
+setInterval(wakeAnalysisWorker, 30_000).unref();
 let rendering = false;
 
 app.post("/api/export", (c) => {

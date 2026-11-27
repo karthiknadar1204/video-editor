@@ -36,6 +36,13 @@
       "when": 1795765985137,
       "tag": "0004_codex_editor",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795768596626,
+      "tag": "0005_source_analysis",
+      "breakpoints": true
     }
   ]
 }

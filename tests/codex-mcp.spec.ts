@@ -57,7 +57,7 @@ test("external MCP holds a single-project key, edits exactly one title and loses
     data: { jsonrpc: "2.0", method: "notifications/initialized" } });
   expect(notification.status()).toBe(202);
   const tools = (await (await protocol(request, key, "tools/list", {})).json()).result.tools;
-  expect(tools.map((t: { name: string }) => t.name).sort()).toEqual(["inspect_selection", "list_assets", "read_project", "render_frame", "update_title"]);
+  expect(tools.map((t: { name: string }) => t.name).sort()).toEqual(["inspect_selection", "inspect_source", "list_assets", "read_project", "render_frame", "search_transcript", "update_title"]);
   expect((await info()).lastUsedAt).toBeTruthy();
   expect(data(await tool(request, key, "read_project", {}))).toMatchObject({ id, revision: 1, clips: { total: 2 } });
   expect(data(await tool(request, key, "list_assets", {})).assets.total).toBeGreaterThan(0);

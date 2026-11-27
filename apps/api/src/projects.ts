@@ -8,6 +8,7 @@ import { db } from "./db/client";
 import { project, session as sessions } from "./db/schema";
 import { getProject, HistoryError, saveEdit } from "./history";
 import { assets } from "./assets";
+import { analysisRoutes } from "./analysis-routes";
 import { projectExports } from "./project-export";
 import { runs } from "./codex-runs";
 import { connections } from "./codex-access";
@@ -31,6 +32,7 @@ projects.use("*", async (c, next) => {
   await next();
 });
 
+projects.route("/", analysisRoutes);
 projects.route("/", assets);
 projects.route("/", connections);
 projects.route("/", runs);

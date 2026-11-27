@@ -6,7 +6,7 @@ permissions:
 jobs:
   regression:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,8 +27,17 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y ffmpeg
           fi
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .local/whisper-1.8.3/ggml-base.en.bin
+            .local/whisper-1.8.3/source.tar.gz
+          key: whisper-downloads-${{ hashFiles('apps/worker/whisper.ts') }}
+      - run: bun run --cwd apps/worker setup:whisper
+      - run: CUTROOM_TEST_WHISPER=1 bun test apps/worker/test
       - run: bunx playwright install --with-deps chromium
       - run: bun run test
         env:
           E2E_PRODUCTION: "1"
+          CUTROOM_TEST_WHISPER: "1"
           CUTROOM_MEDIA_STORAGE: local

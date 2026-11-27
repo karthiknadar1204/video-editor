@@ -8,6 +8,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { appOrigin } from "./auth";
+import { inspectSource, searchTranscripts } from "./analysis";
 import { AllowanceError } from "./allowance";
 import { acknowledgeRead, authorizeEdit, markConnected, resolveProjectKey, selectionWasRemoved, type ProjectAccess } from "./codex-access";
 import { recordEdit, recordTool } from "./codex-runs-store";
@@ -41,7 +42,7 @@ function errorText(error: unknown) {
 
 function editorServer(access: ProjectAccess) {
   const server = new McpServer({ name: "cutroom", version: "1.0.0" }, {
-    instructions: "Use the authorized project only. Read its current state, inspect the requested title, update it at that revision, then inspect a frame containing the edit. A queued frame can be polled with the same arguments.",
+    instructions: "Use the authorized project only. Search speech in original asset time. Inspect source contact sheets for original footage and render a committed timeline frame to examine edits. Poll queued timeline frames with the same arguments.",
   });
   async function snapshot() {
     const project = await getProject(access.projectId, access.ownerId);
@@ -71,15 +72,39 @@ function editorServer(access: ProjectAccess) {
       detail: "Read revision " + revision };
   }));
   server.registerTool("list_assets", {
-    description: "List source assets available to this project with names, frame durations and media metadata. Delivery URLs are private.",
+    description: "List source assets in this project with frame durations and media metadata. Use inspect_source for the latest analysis and transcript status.",
     inputSchema: pagination, annotations: readOnly,
   }, ({ offset }) => call("list_assets", async () => {
     const { revision, timeline } = await snapshot();
     const assets = timeline.assets.map(({ id, name, duration, metadata }) => ({
       id, name, duration, mediaType: metadata?.mediaType ?? "video", width: metadata?.width, height: metadata?.height,
-      hasAudio: metadata?.hasAudio, transcript: metadata?.transcript,
+      hasAudio: metadata?.hasAudio,
     }));
     return { result: textResult({ revision, assets: page(assets, offset) }), detail: "Listed " + assets.length + " assets" };
+  }));
+  server.registerTool("search_transcript", {
+    description: "Find a phrase across project sources, or words overlapping a source-time range. Supply either phrase or assetId with startMs and endMs. Source milliseconds and timeline frame intervals have exclusive ends. Omit clipId for all surviving timeline uses, or supply one clipId to restrict placements. Estimated word timing comes from a subtitle cue and is approximate. pendingAssetIds identifies sources still awaiting analysis.",
+    inputSchema: { phrase: z.string().trim().min(1).max(500).optional(), assetId: clipId.optional(), clipId: clipId.optional(),
+      startMs: frameNumber.optional(), endMs: frameNumber.optional(), offset: pagination.offset }, annotations: readOnly,
+  }, args => call("search_transcript", async () => {
+    const ranged = args.startMs !== undefined || args.endMs !== undefined;
+    if (args.phrase && ranged) throw new EditError("Choose either a phrase or a source time range.");
+    if (!args.phrase && (!args.assetId || args.endMs === undefined || args.startMs === undefined || args.endMs <= args.startMs))
+      throw new EditError("Supply a phrase or an asset ID and a nonempty source time range.");
+    const hits = await searchTranscripts(access, args);
+    if (!hits) throw new HistoryError(404, "Project not found.");
+    return { result: textResult(hits), detail: "Found " + hits.matches.length + " source ranges at revision " + hits.revision };
+  }));
+  server.registerTool("inspect_source", {
+    description: "Read one original source asset's analysis and transcript status. For video with a ready contact sheet, the native image tiles follow timestampsMs in row-major order. These are original source times in milliseconds. Use render_frame for an edited timeline frame.",
+    inputSchema: { assetId: clipId }, annotations: readOnly,
+  }, ({ assetId }) => call("inspect_source", async () => {
+    const source = await inspectSource(access, assetId);
+    if (!source) throw new HistoryError(404, "Source asset not found.");
+    const { jpeg, ...metadata } = source;
+    const result = textResult({ kind: "source_contact_sheet", ...metadata });
+    if (jpeg) result.content.push({ type: "image", mimeType: "image/jpeg", data: jpeg.toString("base64") });
+    return { result, detail: jpeg ? "Read source contact sheet" : "Read source analysis status" };
   }));
   server.registerTool("inspect_selection", {
     description: access.kind === "run" ? "Read the clip, range and playhead captured in this editor tab when the user sent the request."
@@ -138,7 +163,7 @@ function editorServer(access: ProjectAccess) {
     }
     if (job.status === "failed") throw new EditError(job.error);
     const { jobId, status, revision, frame, timestampMs } = job;
-    const result = textResult({ jobId, status, revision, frame, timestampMs });
+    const result = textResult({ kind: "committed_frame", jobId, status, revision, frame, timestampMs });
     if (job.status === "ready") result.content.push({ type: "image", mimeType: job.mimeType, data: job.data });
     return { result, detail: "Frame " + frame + " at revision " + revision + " · " + status };
   }));

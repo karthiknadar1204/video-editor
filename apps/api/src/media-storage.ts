@@ -1,4 +1,6 @@
 import { createHmac } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import { mkdir, mkdtemp, open, link, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -110,6 +112,15 @@ export async function removeAbandoned(row: Upload) {
   for (const file of await client.assets.list({ type: "file", path: path + "/" })) {
     if (file.fileId && file.filePath?.startsWith(path + "/")) await client.files.delete(file.fileId);
   }
+}
+
+export async function stageOriginal(row: Upload, destination: string, signal?: AbortSignal) {
+  const timeout = AbortSignal.timeout(90_000);
+  const deadline = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  const response = row.storage === "local" ? await serveAsset(row, "original", undefined)
+    : await fetch(signedURL(row, originalName(row.mime)), { redirect: "error", signal: deadline });
+  if (!response.ok || !response.body) throw new MediaError("The original media is unavailable.", 503);
+  await pipeline(response.body, createWriteStream(destination, { flags: "wx", mode: 0o600 }), { signal: deadline });
 }
 
 export async function serveAsset(row: Upload, kind: string, range: string | undefined) {
