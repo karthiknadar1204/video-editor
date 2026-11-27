@@ -9,6 +9,8 @@ import { project, session as sessions } from "./db/schema";
 import { getProject, HistoryError, saveEdit } from "./history";
 import { assets } from "./assets";
 import { projectExports } from "./project-export";
+import { runs } from "./codex-runs";
+import { connections } from "./codex-access";
 
 const input = z.strictObject({ title: z.string().trim().min(1).max(120), format: z.enum(canvasFormats) });
 export const projects = new Hono<{ Variables: { ownerId: string; sessionId: string } }>();
@@ -30,6 +32,8 @@ projects.use("*", async (c, next) => {
 });
 
 projects.route("/", assets);
+projects.route("/", connections);
+projects.route("/", runs);
 
 projects.route("/", projectExports);
 

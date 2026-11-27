@@ -4,10 +4,14 @@ import { exportFile } from "../../worker/paths";
 import { renderSequence } from "./project-export";
 import { auth } from "./auth";
 import { projects } from "./projects";
+import { mcp } from "./mcp";
+import { wakeFrameWorker } from "./frames";
 
 const app = new Hono();
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/projects", projects);
+app.route("/api/mcp", mcp);
+wakeFrameWorker();
 let rendering = false;
 
 app.post("/api/export", (c) => {

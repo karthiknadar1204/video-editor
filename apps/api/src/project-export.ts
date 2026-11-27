@@ -13,24 +13,32 @@ import { db } from "./db/client";
 import { projectAsset } from "./db/schema";
 import { originalName } from "./media";
 import { serveAsset } from "./media-storage";
+import { AllowanceError, takeAllowance } from "./allowance";
 
-export async function renderSequence(write: (chunk: Uint8Array) => Promise<unknown>, job?: string) {
+export async function renderSequence(write: (chunk: Uint8Array) => Promise<unknown>, job?: string, still?: { frame: number; signal: AbortSignal }) {
   const worker = Bun.spawn(["node", "--import", "tsx", "src/render.ts"], {
-    cwd: workerDir, stdout: "pipe", stderr: "inherit",
+    cwd: workerDir, stdout: "pipe", stderr: "inherit", signal: still?.signal, killSignal: "SIGKILL",
     env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR,
       REMOTION_BROWSER_EXECUTABLE: process.env.REMOTION_BROWSER_EXECUTABLE,
-      CUTROOM_RENDER_DIR: process.env.CUTROOM_RENDER_DIR, CUTROOM_RENDER_JOB: job },
+      CUTROOM_RENDER_DIR: process.env.CUTROOM_RENDER_DIR, CUTROOM_RENDER_JOB: job, CUTROOM_RENDER_FRAME: still?.frame.toString() },
   });
-  for await (const chunk of worker.stdout) await write(chunk);
+  try {
+    for await (const chunk of worker.stdout) await write(chunk);
+  } catch (error) {
+    worker.kill("SIGKILL");
+    await worker.exited;
+    throw error;
+  }
   if (await worker.exited !== 0) throw new Error("The render worker could not finish this export.");
 }
 
 // Materialize referenced originals inside the render job so the renderer needs no credentials.
-async function prepareProject(job: string, projectId: string, timeline: Timeline) {
+export async function prepareProject(job: string, projectId: string, timeline: Timeline, signal?: AbortSignal) {
   await mkdir(join(job, "assets"));
   const used = new Set(timeline.clips.flatMap(c => c.kind === "media" ? [c.assetId] : []));
   const assets = [];
   for (const asset of timeline.assets.filter(a => used.has(a.id))) {
+    signal?.throwIfAborted();
     if ([sample, rushes].some(bundled => asset.src === bundled.src)) {
       assets.push(asset);
       continue;
@@ -43,11 +51,11 @@ async function prepareProject(job: string, projectId: string, timeline: Timeline
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const target = new URL(response.headers.get("Location") ?? "");
       if (target.protocol !== "https:") throw new Error("Invalid original media location.");
-      response = await fetch(target, { redirect: "error", signal: AbortSignal.timeout(90_000) });
+      response = await fetch(target, { redirect: "error", signal: signal ?? AbortSignal.timeout(90_000) });
     }
     if (!response.ok || !response.body) throw new Error("Could not open the original media for " + asset.name);
     const filename = asset.id + extname(originalName(row.mime));
-    await pipeline(response.body, createWriteStream(join(job, "assets", filename), { flags: "wx", mode: 0o600 }));
+    await pipeline(response.body, createWriteStream(join(job, "assets", filename), { flags: "wx", mode: 0o600 }), { signal });
     assets.push({ ...asset, src: "imports/" + filename });
   }
   await writeFile(join(job, "timeline.json"), JSON.stringify({ ...timeline, assets }));
@@ -70,6 +78,13 @@ projectExports.post("/:id/export", async c => {
   if (await Bun.file(output).exists()) return c.text("Ready\n");
   if (rendering) return c.json({ error: "An export is running. Try again when it finishes." }, 409);
   rendering = true;
+  try {
+    await takeAllowance(c.get("ownerId"), "render");
+  } catch (error) {
+    rendering = false;
+    if (error instanceof AllowanceError) return c.json({ error: error.message }, 429);
+    throw error;
+  }
   c.header("Cache-Control", "private, no-store, no-transform");
   c.header("X-Accel-Buffering", "no");
   return streamText(c, async stream => {

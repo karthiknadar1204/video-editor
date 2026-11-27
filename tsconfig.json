@@ -21,6 +21,7 @@
     "playwright.config.ts",
     "tests/**/*.ts",
     "apps/api/**/*.ts",
+    "apps/runner/src/**/*.ts",
     "apps/worker/**/*.ts",
     "packages/**/*.ts",
     "packages/**/*.tsx"

@@ -3,9 +3,9 @@
   "private": true,
   "scripts": {
     "typecheck": "next typegen && tsc --noEmit",
-    "dev": "next dev -H 127.0.0.1",
-    "build": "next build",
-    "start": "next start -H 127.0.0.1"
+    "dev": "env -u OPENAI_API_KEY -u CUTROOM_RUNNER_SECRET next dev -H 127.0.0.1",
+    "build": "env -u OPENAI_API_KEY -u CUTROOM_RUNNER_SECRET next build",
+    "start": "env -u OPENAI_API_KEY -u CUTROOM_RUNNER_SECRET next start -H 127.0.0.1"
   },
   "dependencies": {
     "@editor/composition": "workspace:*",
