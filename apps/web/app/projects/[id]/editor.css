@@ -7,7 +7,7 @@ body:has(.project-editor) .topbar { min-height:52px; padding-inline:clamp(14px,2
 .project-bar { justify-content:space-between; gap:16px; }
 .project-heading { min-width:0; align-items:baseline; flex-wrap:wrap; gap:5px 15px; }
 .project-heading h1 { font-size:clamp(24px,2.3vw,36px); line-height:1.1; letter-spacing:-.055em; overflow-wrap:anywhere; }
-.project-actions { flex:none; }
+.project-actions { flex:none; max-width:100%; }
 .project-editor button:not(.action,.sequence-panel button,.media-items button,.studio-primary),.project-history summary,.media-dialog button {
   color:var(--paper); background:#29292d; border:1px solid #434347; border-radius:6px; padding:5px 9px; font:inherit; font-size:12px; line-height:1.4;
 }
@@ -43,6 +43,21 @@ body:has(.project-editor) .topbar { min-height:52px; padding-inline:clamp(14px,2
 .assistant-proposal small { color:var(--gold); }
 .assistant-proposal button { margin:3px 4px 0 0; }
 .assistant-compose { padding:0 12px 12px; }
+.assistant-compose summary { color:var(--soft); font-size:11px; cursor:pointer; margin-bottom:5px; }
+.codex-chat { padding:10px 14px; border-bottom:1px solid var(--edge); }
+.codex-chat form label,.connect-body label { display:grid; gap:5px; font-size:11px; color:var(--soft); }
+.codex-chat textarea,.connect-body input,.connect-body pre { padding:8px; width:100%; color:var(--paper); background:var(--ink); border:1px solid var(--edge); border-radius:6px; font:inherit; }
+.codex-chat textarea { min-height:55px; max-height:140px; resize:vertical; font-size:13px; }
+.codex-chat form button { margin-top:6px; }
+.codex-messages { max-height:200px; overflow:auto; }
+.codex-messages article { margin:2px 0 12px; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+.codex-prompt { color:var(--gold); font-weight:600; }
+.codex-messages ul { padding-left:14px; color:var(--soft); font-size:11px; margin:4px 0; }
+.codex-messages small { color:var(--gold); }
+.codex-chat>p,.connect-body small { color:var(--soft); margin-top:6px; font-size:11px; }
+.connect-body { display:grid; gap:12px; padding:15px; }
+.connect-body pre { white-space:pre-wrap; overflow-wrap:anywhere; margin:0; font:12px/1.5 monospace; }
+.connect-body div button { margin-right:5px; }
 .quick-edits { flex-wrap:wrap; margin-bottom:9px; }
 .quick-edits span { color:var(--gold); margin-left:2px; }
 .assistant-compose form { display:flex; gap:3px; align-items:flex-end; border:1px solid #49464a; border-radius:9px; padding:10px; background:#121315; }

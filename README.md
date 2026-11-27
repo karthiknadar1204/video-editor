@@ -30,6 +30,7 @@ The [public sample](http://127.0.0.1:3000) plays and exports a fixed ten-second 
 | --- | --- |
 | `apps/web` | Account screens, project dashboard and canvas, and the public preview. |
 | `apps/api` | Hono serves accounts and project data. Drizzle schema and SQL migrations live here. |
+| `apps/runner` | Private loopback service that starts a pinned Codex app-server for an editor turn and supplies the five Cutroom tools. |
 | `apps/worker` | Node process that bundles the composition and renders H.264 video with AAC audio. |
 | `packages/timeline` | The sequence as data, including dimensions, frame rate, clip placement, and title timing. |
 | `packages/composition` | The Remotion component and local font used by both the browser and worker. |
@@ -84,6 +85,22 @@ The local browser suite tests a rotated MOV with real video decoding and byte-ra
 
 ```sh
 E2E_LIVE_IMAGEKIT=1 bun --env-file=apps/api/.env.local run test tests/imagekit-live.spec.ts tests/media-workspace.spec.ts tests/project-export.spec.ts
+```
+
+### Edit a title with Codex
+
+1. Copy `apps/runner/.env.example` to `apps/runner/.env.local`. Put your OpenAI API key there. Generate a fresh secret with `openssl rand -hex 32` and set the same `CUTROOM_RUNNER_SECRET` in the API and runner env files. Keep both files private.
+2. Run the database migration and `bun run dev` from the repository root. The editor, Hono API, and private runner use loopback ports 3000, 4000, and 4200. Only the runner needs the model credential.
+3. Add a title clip and select it. In **Ask Codex**, enter “Change this to Behind the scenes.” The conversation captures the clip, playhead, range, tab, and saved revision. The assistant can inspect a rendered frame at that revision. **Undo** restores the original title after refresh.
+4. Use **Stop Codex** to interrupt a turn. Any edit already committed appears in the conversation with its revision. Reloading the same editor tab reattaches to the turn. Completed requests in that tab supply context for follow-ups.
+5. To connect a separate Codex client, open **Connect Codex**, create a project key, and copy it into the client's `CUTROOM_MCP_KEY` environment variable. Run the displayed `codex mcp add` command. Ask the client to read the project, then identify the title by clip ID. **Revoke project key** ends access on its next call. Keys expire in 30 days.
+
+Hono enforces daily per-owner allowances before starting a turn or a private render. Configure `CUTROOM_DAILY_TURNS` and `CUTROOM_DAILY_RENDERS` in the API. Repeating the same turn ID or polling a saved frame does not use another allowance. The private frame queue renders the common Remotion composition and returns the image, timestamp, and committed revision over MCP.
+
+The regular browser suite runs the pinned Codex binary with a local model fixture and checks actual image delivery. To repeat the accepted edit against OpenAI, run the optional live tests with your runner credential:
+
+```sh
+E2E_LIVE_CODEX=1 bun --env-file=apps/runner/.env.local run test tests/codex-editor.spec.ts -g 'Codex edits|external Codex'
 ```
 
 ### Database and authentication

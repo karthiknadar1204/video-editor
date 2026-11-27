@@ -6,6 +6,7 @@ import { Player, type PlayerRef } from "@remotion/player";
 import { useEffect, useRef, useState } from "react";
 import { ExportButton } from "../../export-button";
 import { AssistantPanel } from "./assistant-panel";
+import { CodexConnect } from "./codex-connect";
 import { AddClip, EditClip } from "./clip-form";
 import { MediaLibrary } from "./media-library";
 import { TimelinePanel } from "./timeline-panel";
@@ -30,6 +31,7 @@ export function Editor({ initial }: { initial: ProjectSnapshot }) {
   const [selectedId, select] = useState("");
   const [adding, setAdding] = useState(false);
   const [mediaOpen, setMediaOpen] = useState(false);
+  const [connectOpen,setConnectOpen] = useState(false);
   const [mobileTab, setMobileTab] = useState("timeline");
   const [safe, setSafe] = useState(false);
   const [large, setLarge] = useState(false);
@@ -97,6 +99,7 @@ export function Editor({ initial }: { initial: ProjectSnapshot }) {
         <div><h2>Version history</h2>{project.history.length ? <ol>{project.history.map(h => <li key={h.revision}>
           <small>r{h.revision}</small>{h.from !== null ? <button onClick={() => seek(h.from!)}>{h.label}</button> : <span>{h.label}</span>}
         </li>)}</ol> : <p>No edits yet.</p>}</div></details>
+        <button className="studio-subtle" onClick={() => setConnectOpen(true)}>Connect Codex</button>
         <button className="studio-subtle" disabled={!saved} onClick={() => setMediaOpen(true)}>Media library</button>
         <ExportButton project={{ id:project.id, revision }} disabled={!saved || length === 0} /></div>
     </header>
@@ -110,7 +113,7 @@ export function Editor({ initial }: { initial: ProjectSnapshot }) {
     <nav className="mobile-panels" aria-label="Studio panels">{["Timeline", "Assistant"].map(tab =>
       <button key={tab} aria-pressed={mobileTab === tab.toLowerCase()} onClick={() => setMobileTab(tab.toLowerCase())}>{tab}</button>)}</nav>
     <div className="editor-workspace">
-      <AssistantPanel project={project} selected={selected} frame={frame} editable={editable && !hasDraft} onApply={submit} />
+      <AssistantPanel project={project} selected={selected} frame={frame} editable={saved} onApply={submit} />
       <section className="editor-preview studio-card" aria-label="Project preview">
         <div className="studio-panel-title"><h2>Preview</h2><div className="monitor-settings">
           <button aria-pressed={safe} onClick={() => setSafe(!safe)}>Safe zone</button>
@@ -144,5 +147,6 @@ export function Editor({ initial }: { initial: ProjectSnapshot }) {
       toolbar={<div className="history-buttons"><button disabled={!editable || !project.canUndo} onClick={() => void save("undo")}>Undo</button>
         <button disabled={!editable || !project.canRedo} onClick={() => void save("redo")}>Redo</button></div>} />
     {mediaOpen && <MediaLibrary id={project.id} timeline={timeline} onAdded={syncAssets} onInsert={insertAsset} close={() => setMediaOpen(false)} />}
+    {connectOpen && <CodexConnect id={project.id} close={()=>setConnectOpen(false)} />}
   </main>;
 }

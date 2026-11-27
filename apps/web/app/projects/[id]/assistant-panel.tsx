@@ -1,5 +1,6 @@
 import { editTimeline, textClip, type Change, type Clip, type ProjectSnapshot } from "@editor/timeline";
 import { useState, type FormEvent } from "react";
+import { CodexChat } from "./codex-chat";
 
 type Proposal = { ops: Change[]; label: string; revision: number; select?: string };
 export function AssistantPanel({ project, selected, frame, editable, onApply }: {
@@ -49,8 +50,9 @@ export function AssistantPanel({ project, selected, frame, editable, onApply }: 
   }
   function send(e: FormEvent) { e.preventDefault(); prepare(prompt); }
   return <section className="studio-assistant studio-card" aria-label="Edit assistant">
-    <div className="studio-panel-title"><span className="assistant-mark" aria-hidden="true">✦</span><h2>Edit assistant</h2></div>
-    <div className="assistant-body"><div className="assistant-intro"><h3>Quick edits</h3><p>Choose an edit or type a title. Review the change before applying it.</p></div>
+    <div className="studio-panel-title"><span className="assistant-mark" aria-hidden="true">✦</span><h2>Codex assistant</h2></div>
+    <CodexChat project={project} selected={selected} frame={frame} editable={editable} />
+    <div className="assistant-body"><div className="assistant-intro"><h3>Quick edits</h3></div>
       {completed.length > 0 && <ol className="assistant-log" aria-label="Completed quick edits" aria-live="polite">{completed.map((item, i) =>
         <li key={i}><small>Applied</small>{item}</li>)}</ol>}
       {proposal && <div className="assistant-proposal"><small>{applying ? "Saving edit…" : "Proposed edit"}</small><strong>{proposal.label}</strong>
@@ -60,9 +62,9 @@ export function AssistantPanel({ project, selected, frame, editable, onApply }: 
       {note && <p className="assistant-note" aria-live="polite">{note}</p>}
     </div>
     <div className="assistant-compose"><div className="quick-edits">{suggestions.map(s => <button key={s} disabled={!editable} onClick={() => prepare(s)}>{s} <span>↗</span></button>)}</div>
-      <form onSubmit={send}><label><span>Target · {target ?? project.title}</span>
+      <details><summary>Custom quick edit</summary><form onSubmit={send}><label><span>{target ?? project.title}</span>
         <input aria-label="Quick edit request" value={prompt} maxLength={280} onChange={e => { setPrompt(e.target.value); propose(null); }} placeholder="Describe a quick edit…" /></label>
-        <button type="submit" disabled={!editable || !prompt.trim()} aria-label="Preview request">↑</button></form>
+        <button type="submit" disabled={!editable || !prompt.trim()} aria-label="Preview request">↑</button></form></details>
     </div>
   </section>;
 }
