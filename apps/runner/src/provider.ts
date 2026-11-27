@@ -60,14 +60,18 @@ const callItem = z.object({
   name: toolName,
   arguments: z.string().max(64000),
 });
+const count = z.number().int().nonnegative();
+const usage = z.object({ input_tokens: z.number(), output_tokens: z.number(), total_tokens: z.number() });
+const measuredReply = z.object({ usage: z.object({
+  input_tokens: count, output_tokens: count, total_tokens: count,
+  input_tokens_details: z.object({ cached_tokens: count }).nullish(),
+  output_tokens_details: z.object({ reasoning_tokens: count }).nullish(),
+}) });
 const modelReply = z.object({
   id: responseId,
   status: z.literal("completed"),
   output: z.array(z.discriminatedUnion("type", [assistantItem, reasoningItem, callItem])),
-  usage: z
-    .object({ input_tokens: z.number(), output_tokens: z.number(), total_tokens: z.number() })
-    .optional()
-    .nullable(),
+  usage: usage.nullish(),
 });
 
 async function serviceError(response: Response) {
@@ -191,7 +195,17 @@ export function openProvider(options: {
           throw new RunnerError(deadline.aborted ? "deadline" : options.signal.aborted ? "interrupted" : "upstream");
         });
         if (!upstream.ok) throw await serviceError(upstream);
-        const reply = modelReply.parse(await upstream.json());
+        const result = await upstream.json();
+        if (base.origin === "https://api.openai.com" && process.env.E2E_RELEASE_METRICS === "1") {
+          const measured = measuredReply.safeParse(result);
+          if (measured.success) {
+            const u = measured.data.usage;
+            const counters = [u.input_tokens, u.output_tokens, u.total_tokens,
+              u.input_tokens_details?.cached_tokens ?? 0, u.output_tokens_details?.reasoning_tokens ?? 0];
+            console.error("CUTROOM_MODEL_USAGE " + counters.join(" "));
+          }
+        }
+        const reply = modelReply.parse(result);
         for (const [id, tool] of imageReceipts(data.input)) {
           if (acknowledged.has(id)) continue;
           acknowledged.add(id);

@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { statSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { mediaClip, projectSnapshot, roughCutReceiptSchema } from "../packages/timeline/src";
 import { signup } from "./accounts";
@@ -9,7 +11,67 @@ import { webOrigin } from "./local";
 const prompt =
   'Make a rough cut of clip interview. Remove long pauses and clear duplicate takes, but keep "you got a color film jim" every time. Use highlighted captions. First preview them at the top, then move them to the bottom and inspect the updated candidate. Commit that cut and inspect the saved frame.';
 
-async function prepare(page: Page, info: TestInfo) {
+const measure = process.env.E2E_RELEASE_METRICS === "1";
+const elapsed = (start: number) => Math.round(performance.now() - start);
+
+async function observeNativeTranscript(page: Page, endpoint: string, uploadAt: number) {
+  while (elapsed(uploadAt) < 90_000) {
+    const response = await page.request.get(endpoint + "?view=original", { timeout: 5000 });
+    if (!response.ok()) return null;
+    const analysis = await response.json();
+    if (analysis.hasOriginal && analysis.total > 0) return elapsed(uploadAt);
+    if (analysis.status === "ready" || analysis.status === "failed") return null;
+    await delay(350);
+  }
+  return null;
+}
+
+async function measureFrame(page: Page, base: string, revision: number, frame: number) {
+  const connection = await page.request.post(base + "/connection", { data: {} });
+  if (!connection.ok()) return null;
+  const { key } = await connection.json();
+  const start = performance.now();
+  try {
+    while (elapsed(start) < 35_000) {
+      const response = await page.request.post("/api/mcp", {
+        headers: { Authorization: "Bearer " + key, Accept: "application/json, text/event-stream" },
+        data: { jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name: "render_frame", arguments: { revision, frame } } },
+        timeout: 15_000,
+      });
+      if (!response.ok()) return null;
+      const { result } = await response.json();
+      if (!result || result.isError) return null;
+      if (result.content.some((c: { type: string; data?: string }) => c.type === "image" && c.data)) return elapsed(start);
+      await delay(250);
+    }
+    return null;
+  } finally {
+    await page.request.delete(base + "/connection");
+  }
+}
+
+async function observeExport(page: Page, base: string, revision: number, start: number, signal: AbortSignal) {
+  let queued: number | null = null, active: number | null = null, completed: number | null = null;
+  while (!signal.aborted && elapsed(start) < 150_000) {
+    const response = await page.request.get(base + "/exports", { timeout: 5000 });
+    if (!response.ok()) break;
+    const { items } = await response.json();
+    const job = items.find((item: { revision: number }) => item.revision === revision);
+    const now = elapsed(start);
+    if (job?.status === "queued") queued ??= now;
+    if (job?.status === "rendering" || job?.status === "uploading") active ??= now;
+    if (job?.status === "completed") { completed = now; break; }
+    if (job?.status === "failed" || job?.status === "cancelled") break;
+    await delay(200);
+  }
+  return {
+    observedExportQueueMs: queued !== null && active !== null ? active - queued : null,
+    submitToObservedActiveExportMs: active,
+    observedActiveExportThroughUploadMs: active !== null && completed !== null ? completed - active : null,
+  };
+}
+
+async function prepare(page: Page, info: TestInfo, measureTranscript = false) {
   const path = info.outputPath("interview-takes.mp4");
   // Two real takes of each Apollo 8 excerpt, with a deliberate 1.4s silence between the passages.
   const fixture = "apps/web/public/media/earthrise.mp4";
@@ -77,6 +139,7 @@ async function prepare(page: Page, info: TestInfo) {
   const source = original.timeline.assets.find((a) => a.name === "interview-takes.mp4");
   if (!source) throw new Error("Fixture footage is missing.");
   const endpoint = base + "/assets/" + source.id + "/analysis";
+  const nativeTranscript = measureTranscript ? observeNativeTranscript(page, endpoint, uploadAt).catch(() => null) : null;
   const words: { text: string; startMs: number; endMs: number }[] = [];
   function phrase(text: string, bounds: number[], offset: number) {
     for (const [i, word] of text.split(" ").entries())
@@ -107,7 +170,7 @@ async function prepare(page: Page, info: TestInfo) {
     }),
   ).toBeOK();
   await page.goto(editor);
-  return { read, base, original: await read(), editor, uploadToPlayableMs };
+  return { read, base, original: await read(), editor, uploadToPlayableMs, nativeTranscript, fixtureBytes: statSync(path).size };
 }
 
 async function accepted(page: Page, base: string) {
@@ -129,7 +192,7 @@ test("rough-cut review plays both takes, restores a passage and exports the sele
   browser,
 }, info) => {
   test.setTimeout(300_000);
-  const { base, read, original, editor, uploadToPlayableMs } = await prepare(page, info);
+  const { base, read, original, editor, uploadToPlayableMs, nativeTranscript, fixtureBytes } = await prepare(page, info, measure);
   await page.getByRole("button", { name: "interview-takes.mp4 at frame 0" }).click();
   const chat = page.getByRole("region", { name: "Edit assistant" });
   await chat.getByRole("textbox", { name: "Ask Codex" }).fill(prompt);
@@ -222,11 +285,20 @@ test("rough-cut review plays both takes, restores a passage and exports the sele
   await inspector.getByRole("button", { name: "Save properties" }).click();
   await expect.poll(async () => (await read()).timeline.clips.find((c) => c.id === caption.id)?.y).toBe(caption.y - 40);
   const chosenRevision = (await read()).revision;
+  const frameInspectionMs = measure ? await measureFrame(page, base, chosenRevision, caption.start).catch(() => null) : null;
   const renderAt = performance.now();
-  await page.getByRole("button", { name: "Export MP4", exact: true }).click();
-  await expect(page.getByRole("link", { name: "Download MP4", exact: true }).first()).toBeVisible({ timeout: 150_000 });
+  const stop = new AbortController();
+  const exportMetrics = measure ? observeExport(page, base, chosenRevision, renderAt, stop.signal).catch(() => null) : null;
+  try {
+    await page.getByRole("button", { name: "Export MP4", exact: true }).click();
+    await expect(page.getByRole("link", { name: "Download MP4", exact: true }).first()).toBeVisible({ timeout: 150_000 });
+  } catch (error) {
+    stop.abort();
+    throw error;
+  }
   const renderToCompleteMs = Math.round(performance.now() - renderAt);
-  const timings = { uploadToPlayableMs, submitToFirstCandidateMs, submitToSavedEditMs, renderToCompleteMs };
+  const timings = { fixtureBytes, uploadToPlayableMs, submitToFirstCandidateMs, submitToSavedEditMs, renderToCompleteMs,
+    ...(measure ? { uploadToNativeTranscriptMs: await nativeTranscript, frameInspectionMs, ...await exportMetrics } : {}) };
   await info.attach("release-timings.json", {
     body: Buffer.from(JSON.stringify(timings)),
     contentType: "application/json",

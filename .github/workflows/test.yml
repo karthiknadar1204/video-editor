@@ -36,8 +36,16 @@ jobs:
       - run: bun run --cwd apps/worker setup:whisper
       - run: CUTROOM_TEST_WHISPER=1 bun test apps/worker/test
       - run: bunx playwright install --with-deps chromium
+      - run: bun test packages/composition/test
       - run: bun run test
         env:
           E2E_PRODUCTION: "1"
           CUTROOM_TEST_WHISPER: "1"
           CUTROOM_MEDIA_STORAGE: local
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failure-traces
+          path: test-results/**/trace.zip
+          retention-days: 3
+          if-no-files-found: ignore
