@@ -22,7 +22,7 @@ The bundled Inter Latin variable font uses the SIL Open Font License. The previe
 
 1. Run `bun run build` and `bun run start`. Open the editor, play with sound, and listen across the pause.
 2. Select **Title in** and step backward and forward. The readout should switch between frames 149 and 150. Use **Opening shot** to return to the start.
-3. Run `bun run test` with the server running. The test observes intermediate export progress, downloads the MP4, opens its bytes in a separate native HTML video element, compares the title region to screenshots, and measures the decoded speech and silence. Repeating the test with `bun run dev` checks the development proxy.
+3. With the local database and mail services running, use `bun run test` for the development proxy or `E2E_PRODUCTION=1 bun run test` for the production build. The test starts isolated servers, observes intermediate export progress, downloads the MP4, opens its bytes in a separate native HTML video element, compares the title region to screenshots, and measures the decoded speech and silence.
 4. For a stream-level inspection, run `ffprobe -v error -show_entries stream=codec_name,width,height,avg_frame_rate,nb_frames,duration -of compact .renders/earthrise.mp4`. Expect 300 H.264 frames and an AAC audio stream. The video duration is exactly 10.000 seconds. AAC padding can extend the container duration by less than one video frame.
 
 ## Initial local baseline

@@ -21,7 +21,7 @@ app.post("/api/export", (c) => {
       const worker = Bun.spawn(["node", "--import", "tsx", "src/render.ts"], {
         cwd: workerDir, stdout: "pipe", stderr: "inherit",
         env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR,
-          REMOTION_BROWSER_EXECUTABLE: process.env.REMOTION_BROWSER_EXECUTABLE },
+          REMOTION_BROWSER_EXECUTABLE: process.env.REMOTION_BROWSER_EXECUTABLE, CUTROOM_RENDER_DIR: process.env.CUTROOM_RENDER_DIR },
       });
       for await (const chunk of worker.stdout) await stream.write(chunk);
       await stream.writeln((await worker.exited) === 0 ? "Ready" : "Failed");

@@ -54,7 +54,7 @@ export default function Page() {
     <>
       <header className="topbar">
         <div className="brand"><span className="mark" aria-hidden="true">◩</span>Cutroom</div>
-        <span className="divider" aria-hidden="true">/</span><span className="workspace">Workspace</span>
+        <span className="divider" aria-hidden="true">/</span><a className="workspace project-nav" href="/projects">My projects</a>
         <ExportButton />
       </header>
       <main>

@@ -13,8 +13,9 @@
     "build": "bun run --cwd apps/web build",
     "start": "bun --filter @editor/web --filter @editor/api start",
     "render": "bun run --cwd apps/worker render",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p apps/web",
-    "test": "playwright test"
+    "typecheck": "tsc --noEmit && bun run --cwd apps/web typecheck",
+    "test": "playwright test",
+    "test:migrations": "bun apps/api/test/migrations.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.60.0",
@@ -22,6 +23,7 @@
     "@types/node": "22.19.0",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.2.3",
+    "postgres": "4.1.1",
     "typescript": "5.9.3"
   }
 }
