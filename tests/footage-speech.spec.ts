@@ -43,6 +43,11 @@ test("a private speech recording becomes searchable, and recovery keeps the orig
     await expect.poll(async () => (await (await page.request.get(path)).json()).status, { timeout: 45_000 }).toBe("ready");
     const rows = await sql`select status from source_analysis where project_id=${id} and asset_id=${assetId}`;
     expect(rows.map(row => row.status)).toEqual(["ready"]);
+    // Leave an older model's result in the cache to exercise first access after an upgrade.
+    await sql`update source_analysis set version='older-test-model', original_words='[]'::jsonb where project_id=${id} and asset_id=${assetId}`;
+    await expect.poll(async () => (await (await page.request.get(path)).json()).status, { timeout: 60_000 }).toBe("ready");
+    const versions = await sql`select version from source_analysis where project_id=${id} and asset_id=${assetId}`;
+    expect(versions.map(row => row.version).sort()).toEqual([original.version, "older-test-model"].sort());
   } finally { await sql.end(); }
   const current = await (await page.request.get(path)).json();
   expect(current).toMatchObject({ transcriptStatus: "corrected", revision: 1 });

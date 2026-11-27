@@ -8,7 +8,7 @@ import sharp, { type OverlayOptions } from "sharp";
 import { z } from "zod";
 import { cliPath, modelPath, whisper } from "../whisper";
 
-export const analysisVersion = "whisper.cpp-" + whisper.version + "/base.en/sow-1/sheet-1";
+export const analysisVersion = "whisper.cpp-" + whisper.version + "/base.en-" + whisper.modelHash.slice(0, 16) + "/sow-1/sheet-1";
 const exec = promisify(execFile);
 const localInput = ["-protocol_whitelist", "file", "-format_whitelist", "mov,matroska,webm,mp3,wav,ogg"];
 const mediaOptions = { env: { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR }, killSignal: "SIGKILL" as const };
