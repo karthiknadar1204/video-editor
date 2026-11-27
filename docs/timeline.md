@@ -4,6 +4,12 @@ Open a project and use **Insert clip** to place footage, audio, a title, or a ca
 
 Select a clip on the timeline to seek to its first frame and open its properties. Use **Action** to move, trim, split, or delete it. Use **Save properties** to save text, position, and volume changes together. **Undo** and **Redo** work after reopening the project.
 
+Use **Add footage** in an empty project, or open **Media library** while editing. When a recording is playable, choose **Insert** to put it at the end of the video or speech track. The library shows its duration, display dimensions and audio or transcript status. Use **Canvas fit** and **Rotation** in the inspector to reframe a video.
+
+Drag a clip by its middle to move it, or drag either edge to trim. The preview follows the gesture and releasing saves one edit. With a clip focused, the arrow keys move it by one frame. Alt with the arrows trims its start and Shift with the arrows trims its end. Use the ruler to scrub, **Play changes** to review a cut and **Safe zone** to check caption placement. On a phone, **Timeline** and **Assistant** keep the same selection.
+
+The assistant supports **Add title**, **Mute clip** and **Split here** when applicable. Type `Add title First light` to supply your own text. **Apply edit** saves the proposal in project history. **Stop** discards the proposal. **Export MP4** renders the displayed saved revision from the original media.
+
 ## Frames and tracks
 
 - Frame zero is the beginning. A clip at frame 150 with a duration of 60 occupies frames 150 through 209. Its end boundary is 210. The shortest clip is one frame.

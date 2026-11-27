@@ -1,6 +1,6 @@
 "use client";
 
-import { projectSnapshot, type Change, type EditRequest, type ProjectSnapshot } from "@editor/timeline";
+import { editLabel, editSchema, projectSnapshot, type Change, type EditRequest, type ProjectSnapshot } from "@editor/timeline";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export function useTimeline(initial: ProjectSnapshot) {
@@ -9,6 +9,8 @@ export function useTimeline(initial: ProjectSnapshot) {
   const revision = useRef(initial.revision);
   const notified = useRef(initial.revision);
   const dirty = useRef(false);
+  const [hasDraft, setHasDraft] = useState(false);
+  const [online, setOnline] = useState(true);
   const sending = useRef(false);
   const pending = useRef<EditRequest | null>(null);
   const [status, setStatus] = useState<"opening" | "ready" | "saving" | "retry" | "conflict">("opening");
@@ -30,6 +32,7 @@ export function useTimeline(initial: ProjectSnapshot) {
     setProject(next);
     if (discardDraft) {
       dirty.current = false;
+      setHasDraft(false);
       setFormVersion(n => n + 1);
       setStatus("ready");
       setMessage("");
@@ -37,7 +40,19 @@ export function useTimeline(initial: ProjectSnapshot) {
   }, [path]);
 
   useEffect(() => {
-    setStatus("ready");
+    const connection = () => setOnline(navigator.onLine);
+    connection();
+    window.addEventListener("online", connection);
+    window.addEventListener("offline", connection);
+    const stored = sessionStorage.getItem(path + "/pending");
+    if (stored) {
+      try { pending.current = editSchema.parse(JSON.parse(stored)); }
+      catch { sessionStorage.removeItem(path + "/pending"); }
+    }
+    if (pending.current) {
+      setMessage(editLabel(pending.current) + " was interrupted. Retry to confirm the saved revision.");
+      setStatus("retry");
+    } else setStatus("ready");
     const events = new EventSource(path + "/events?since=" + revision.current);
     function sync() {
       void refresh().catch(() => setMessage("Could not sync the timeline. Reload to reconnect."));
@@ -48,13 +63,18 @@ export function useTimeline(initial: ProjectSnapshot) {
       if (notified.current > revision.current) sync();
     });
     events.addEventListener("access-ended", () => { events.close(); window.location.assign("/account"); });
-    return () => events.close();
+    return () => {
+      events.close();
+      window.removeEventListener("online", connection);
+      window.removeEventListener("offline", connection);
+    };
   }, [path, refresh]);
 
   async function submit(command: EditRequest) {
     if (sending.current) return false;
     sending.current = true;
     pending.current = command;
+    sessionStorage.setItem(path + "/pending", JSON.stringify(command));
     setStatus("saving");
     setMessage("");
     try {
@@ -65,6 +85,7 @@ export function useTimeline(initial: ProjectSnapshot) {
       if (!response.ok && response.status < 500) {
         const body = await response.json();
         pending.current = null;
+        sessionStorage.removeItem(path + "/pending");
         setMessage(body.error);
         setStatus(response.status === 409 ? "conflict" : "ready");
         return false;
@@ -72,10 +93,11 @@ export function useTimeline(initial: ProjectSnapshot) {
       if (!response.ok) throw new Error("Save unavailable.");
       await refresh(true);
       pending.current = null;
+      sessionStorage.removeItem(path + "/pending");
       return true;
     } catch {
       setStatus("retry");
-      setMessage("Save could not be confirmed. Retry to check this exact edit.");
+      setMessage(editLabel(command) + " could not be confirmed. Retry to check this exact edit.");
       return false;
     } finally {
       sending.current = false;
@@ -91,7 +113,9 @@ export function useTimeline(initial: ProjectSnapshot) {
     return submit(typeof action === "string" ? { ...base, kind: action } : { ...base, kind: "edit", operations: action });
   }
 
-  return { project, status, message, save, formVersion, markDirty: () => { dirty.current = true; },
+  return { project, status, message, save, formVersion, hasDraft, online, syncAssets: refresh,
+    markDirty: () => { dirty.current = true; setHasDraft(true); },
+    clearDraft: () => { dirty.current = false; setHasDraft(false); },
     retry: () => pending.current && submit(pending.current),
     reload: () => refresh(true).catch(() => setMessage("Could not reload. Try again.")),
   };

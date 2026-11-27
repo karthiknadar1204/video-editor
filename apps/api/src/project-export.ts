@@ -1,5 +1,7 @@
+import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { rushes, sample, type Timeline } from "@editor/timeline";
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
@@ -45,7 +47,7 @@ async function prepareProject(job: string, projectId: string, timeline: Timeline
     }
     if (!response.ok || !response.body) throw new Error("Could not open the original media for " + asset.name);
     const filename = asset.id + extname(originalName(row.mime));
-    await Bun.write(join(job, "assets", filename), response);
+    await pipeline(response.body, createWriteStream(join(job, "assets", filename), { flags: "wx", mode: 0o600 }));
     assets.push({ ...asset, src: "imports/" + filename });
   }
   await writeFile(join(job, "timeline.json"), JSON.stringify({ ...timeline, assets }));

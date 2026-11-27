@@ -7,6 +7,7 @@ const production = process.env.E2E_PRODUCTION === "1";
 
 export default defineConfig({
   testDir: "./tests",
+  workers: 2,
   timeout: 120_000,
   use: {
     baseURL: webOrigin,
@@ -21,6 +22,8 @@ export default defineConfig({
       env: {
         DATABASE_URL: testDatabase, BETTER_AUTH_URL: webOrigin, BETTER_AUTH_SECRET: randomBytes(32).toString("hex"),
         NODE_ENV: production ? "production" : "test", CUTROOM_RENDER_DIR: resolve(".renders/test"),
+        CUTROOM_MEDIA_STORAGE: process.env.E2E_LIVE_IMAGEKIT === "1" ? "imagekit" : "local",
+        CUTROOM_MEDIA_DIR: resolve(".local/media-test"),
         API_PORT: "4100", SMTP_URL: "smtp://127.0.0.1:1025", MAIL_FROM: "Cutroom <accounts@cutroom.test>",
       },
     },

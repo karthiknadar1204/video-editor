@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 import postgres from "postgres";
 import { testDatabase, webOrigin } from "./local";
 
-import { mailLink, password, signup } from "./accounts";
+import { mailLink, password, signIn, signup } from "./accounts";
 
 test("two verified accounts can reopen only their own projects and can sign out", async ({ page, browser, request }) => {
   await page.goto("/projects");
@@ -55,12 +55,6 @@ test("a reset link works once and reset or expiry invalidates the old session", 
   await signup(page, email);
   const beforeReset = (await page.context().cookies()).map(c => c.name + "=" + c.value).join("; ");
 
-  async function signIn(pw: string) {
-    await page.goto("/account");
-    await page.getByLabel("Email").fill(email);
-    await page.getByLabel("Password", { exact: true }).fill(pw);
-    await page.getByRole("button", { name: "Sign in" }).click();
-  }
   await page.goto("/account?view=forgot");
   await page.getByLabel("Email").fill(email);
   await page.getByRole("button", { name: "Send reset link" }).click();
@@ -75,9 +69,9 @@ test("a reset link works once and reset or expiry invalidates the old session", 
   expect((await request.get("/api/projects", { headers: { cookie: beforeReset } })).status()).toBe(401);
   const reused = await request.post("/api/auth/reset-password", { data: { token, newPassword: password } });
   expect(reused.status()).toBe(400);
-  await signIn(password);
-  await expect(page.getByRole("alert")).toBeVisible();
-  await signIn(changed);
+  expect((await signIn(page, email, password)).status()).toBe(401);
+  await expect(page.getByRole("main").getByRole("alert")).toContainText(/invalid/i);
+  expect((await signIn(page, email, changed)).ok()).toBe(true);
   await expect(page).toHaveURL(/\/projects$/);
 
   const db = postgres(testDatabase, { max: 1 });
