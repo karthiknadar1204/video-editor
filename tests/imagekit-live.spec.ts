@@ -31,7 +31,15 @@ test("ImageKit accepts a bound browser upload and serves the private, processed 
   const media = await attached.json();
   expect(media.metadata).toMatchObject({ width: 90, height: 160, hasAudio: false, transcript: "unavailable", mediaType: "video" });
   expect((await page.request.get(media.metadata.thumbnail)).headers()["content-type"]).toContain("image/");
-  const original = await page.request.get(base + "/" + id + "/original");
+  const originalPath = base + "/" + id + "/original";
+  const delivery = await page.request.get(originalPath, { maxRedirects: 0 });
+  expect(delivery.status()).toBe(307);
+  const unsigned = new URL(delivery.headers().location);
+  unsigned.searchParams.delete("ik-s");
+  unsigned.searchParams.delete("ik-t");
+  const denial = await page.request.get(unsigned.href, { maxRedirects: 0, headers: { Range: "bytes=0-0" } });
+  expect([400, 401, 403, 404]).toContain(denial.status());
+  const original = await page.request.get(originalPath);
   expect(original.ok()).toBe(true);
   expect(Buffer.compare(await original.body(), bytes)).toBe(0);
   const display = await page.evaluate(async src => {

@@ -1,6 +1,6 @@
 # Cutroom
 
-A browser-based video editor built with Next.js, Hono, Bun, and Remotion. Edit footage, audio, titles, and captions on a private timeline. Every saved change can be undone or redone across sessions. The public Apollo 8 sample also supports MP4 export.
+A browser-based video editor built with Next.js, Hono, Bun, and Remotion. Ask Codex for a rough cut, play the proposed changes, restore individual passages, and share a saved revision as a private MP4. The timeline, edit history and undo survive reopening the project.
 
 ## Run locally
 
@@ -30,7 +30,7 @@ The [public sample](http://127.0.0.1:3000) plays and exports a fixed ten-second 
 | --- | --- |
 | `apps/web` | Account screens, project dashboard and canvas, and the public preview. |
 | `apps/api` | Hono serves accounts and project data. Drizzle schema and SQL migrations live here. |
-| `apps/runner` | Private loopback service that starts a pinned Codex app-server for an editor turn and supplies seven project-scoped tools. |
+| `apps/runner` | Private loopback service that starts a pinned Codex app-server and restricts the model to the editor’s ten project-scoped MCP tools. |
 | `apps/worker` | Renders the Remotion composition, transcribes source audio with whisper.cpp, and samples source video into timestamped contact sheets. |
 | `packages/timeline` | The sequence as data, including dimensions, frame rate, clip placement, and title timing. |
 | `packages/composition` | The Remotion component and local font used by both the browser and worker. |
@@ -48,7 +48,10 @@ Next.js forwards `/api` to Hono on port 4000 in development and in the productio
 | `POST /api/projects/:id/assets` | Reserve a private upload and receive its destination and signed form fields. |
 | `POST` or `DELETE /api/projects/:id/assets/:assetId` | Verify and attach uploaded media, or cancel an unfinished upload. |
 | `GET /api/projects/:id/assets/:assetId/:kind` | Serve the owner's original, playback copy, or thumbnail. |
-| `POST` or `GET /api/projects/:id/export` | Render a saved revision or download its completed MP4. |
+| `/api/projects/:id/rough-cuts` | List reviews or prepare a candidate. Read one review and use its `commit`, `restore` and `undo` actions. |
+| `POST` or `GET /api/projects/:id/export` | Queue a saved revision or download a completed revision. |
+| `/api/projects/:id/exports` | Browse export history. Each version exposes its attempts, edit history, file, retry, cancel and share controls. |
+| `/watch/:token` | Play one completed export. The page and its media requests check the current link authorization. |
 | `POST /api/export` and `GET /api/export` | Render the public sample and download the completed MP4. |
 
 ## Commands
@@ -69,7 +72,7 @@ Next.js forwards `/api` to Hono on port 4000 in development and in the productio
 
 To use an existing installation of Google Chrome for the test, set `TEST_BROWSER_CHANNEL=chrome`. To supply a worker browser on a machine with restricted downloads, set `REMOTION_BROWSER_EXECUTABLE` to its executable. If you change Hono’s port, set `API_PORT` for Hono and `API_ORIGIN` for Next.js before development startup or production build.
 
-The [timeline guide](docs/timeline.md) covers editing controls, frame rules, saving, and verification. See the [Phase 1 verification notes](docs/first-render.md) for the public sample and the [implementation plan](docs/implementation-plan.md) for later editing and agent milestones.
+See the [timeline guide](docs/timeline.md), [release verification and operating limits](docs/release-verification.md), and [implementation plan](docs/implementation-plan.md).
 
 ## Hosted configuration
 
@@ -117,6 +120,15 @@ The regular browser suite runs the pinned Codex binary with a local model fixtur
 ```sh
 env -u OPENAI_API_KEY E2E_LIVE_CODEX=1 bun --env-file=apps/runner/.env.local run test tests/codex-editor.spec.ts -g 'Codex edits|external Codex'
 ```
+
+### Rough cut to shared MP4
+
+1. Insert the interview on the timeline. In the media library, open **Inspect** to check the recognised words and correct any important boundaries. Imported subtitles have estimated timing until reviewed.
+2. Select the clip or timeline range. Ask Codex, “Tighten long pauses, keep both takes of ‘thank you’, and add highlighted captions near the bottom. Show me a preview.” You can also open **Rough cuts** to choose the range, pause threshold, breathing room, repeated-take preference, and caption appearance yourself.
+3. Play the before and after excerpts. A preview stays separate from the saved timeline until committed. A conflicting edit requires review of a recalculated candidate. Committing applies the cuts and captions in one undoable edit.
+4. Reopen the review to **Restore this passage** with its words and caption timing. Use **Undo this edit** when that group is the newest applied edit. The timeline’s ordinary undo and redo also work after refresh.
+5. Choose **Export MP4** after saving. You can keep editing during the render. Open **Exports** to inspect progress, cancel, retry a failed attempt, download the file, or see the edits through that version. Codex can request an export with `start_export` and follow it with `export_status`.
+6. **Create watch link** lets a viewer play just that version. **Revoke watch link** blocks subsequent playback and seek requests. A loopback watch link works on the same computer. Sending links to other devices requires an accessible host.
 
 ### Database and authentication
 
