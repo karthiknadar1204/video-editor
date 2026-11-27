@@ -112,7 +112,70 @@ export function startFixture(port = 0) {
       if (prompt.includes("verify refused tool")) response = [call("read_project", {}), call("unregistered_tool", {})];
       else if (!calls.length) response = [call("read_project", {})];
       else if (!project) response = [final("Could not read the project.")];
-      else if (/source contact sheet/i.test(prompt)) {
+      else if (/rough cut/i.test(prompt)) {
+        const clips = project.clips as { items: { id: string; kind: string }[] } | undefined;
+        const clipId =
+          request.context?.clipId ??
+          prompt.match(/\bclip ([\w-]+)/i)?.[1] ??
+          clips?.items.find((c) => c.kind === "media")?.id;
+        const previews = calls.filter(
+          (c) => c.name === "rough_cut" && JSON.parse(c.arguments ?? "{}").action === "preview",
+        ).length;
+        const rough = objectResult(result("rough_cut"));
+        const still = objectResult(result("render_frame"));
+        const preview = (placement: string) =>
+          call("rough_cut", {
+            action: "preview",
+            revision: project.revision,
+            options: {
+              target: { clipId },
+              pauseThresholdMs: 600,
+              breathingRoomMs: 80,
+              repetitions: "remove",
+              keepPhrases: [prompt.match(/keep ["“]([^"”]+)["”]/i)?.[1] ?? "stay curious"],
+              captions: { style: "highlight", placement },
+            },
+          });
+        if (!previews) response = [preview("top")];
+        else if (!rough) response = [final("The rough-cut tool could not complete the request.")];
+        else if (rough.kind === "rough_cut_candidate") {
+          if (!imageCount(result("rough_cut"))) response = [final("The candidate image was unavailable.")];
+          else if (previews === 1 && /bottom/i.test(prompt)) response = [preview("bottom")];
+          else if (/preview only/i.test(prompt)) response = [final("The rough-cut candidate is ready for review.")];
+          else
+            response = [
+              call("rough_cut", { action: "commit", reviewId: rough.reviewId, revision: rough.baseRevision }),
+            ];
+        } else if (rough.kind === "committed_rough_cut") {
+          const saved = (rough.edit as { revision: number }).revision;
+          if (!still || still.status !== "ready") {
+            response =
+              calls.filter((c) => c.name === "render_frame").length >= 6
+                ? [final("Saved the cut. Frame verification is unavailable.")]
+                : [call("render_frame", { revision: saved, frame: (rough.previewFrames as number[])[0] ?? 0 })];
+          } else if (!imageCount(result("render_frame"))) response = [final("The saved frame image was unavailable.")];
+          else if (/start (?:an? |the )?export/i.test(prompt) && !calls.some((c) => c.name === "start_export"))
+            response = [call("start_export", { revision: saved })];
+          else if (
+            /start (?:an? |the )?export/i.test(prompt) &&
+            !calls.some((c) => c.name === "export_status") &&
+            objectResult(result("start_export"))?.exportId
+          )
+            response = [call("export_status", { exportId: objectResult(result("start_export"))?.exportId })];
+          else
+            response = [
+              final(
+                "The rough cut is saved at revision " +
+                  saved +
+                  ". I inspected the candidate and the committed frame. Removed " +
+                  rough.pauseCount +
+                  " pauses and created " +
+                  rough.captionCount +
+                  " captions.",
+              ),
+            ];
+        } else response = [final("The rough-cut receipt was unavailable.")];
+      } else if (/source contact sheet/i.test(prompt)) {
         const hits = objectResult(result("search_transcript"));
         const match = (
           hits?.matches as

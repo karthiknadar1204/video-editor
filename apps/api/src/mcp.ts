@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { EditError } from "@editor/timeline";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -8,6 +7,8 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { appOrigin } from "./auth";
+import { registerWorkflows, stableRequestId } from "./mcp-workflows";
+import { ExportError } from "./export-jobs";
 import { inspectSource, searchTranscripts } from "./analysis";
 import { AllowanceError } from "./allowance";
 import { acknowledgeRead, authorizeEdit, markConnected, resolveProjectKey, selectionWasRemoved, type ProjectAccess } from "./codex-access";
@@ -27,16 +28,12 @@ function page<T>(items: T[], offset: number) {
 
 function editId(access: ProjectAccess, revision: number, id: string, text: string) {
   if (access.kind === "run") return access.id;
-  const bytes = createHash("sha256").update(JSON.stringify([access.projectId, revision, id, text])).digest().subarray(0, 16);
-  bytes[6] = (bytes[6] & 15) | 0x80;
-  bytes[8] = (bytes[8] & 63) | 0x80;
-  const hex = bytes.toString("hex");
-  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
+  return stableRequestId([access.projectId, revision, id, text]);
 }
 
 function errorText(error: unknown) {
   if (error instanceof HistoryError) return error.message + (error.revision === undefined ? "" : " Current revision " + error.revision + ".");
-  if (error instanceof EditError || error instanceof FrameError || error instanceof AllowanceError) return error.message;
+  if (error instanceof EditError || error instanceof FrameError || error instanceof ExportError || error instanceof AllowanceError) return error.message;
   return "The editor could not complete this tool request.";
 }
 
@@ -167,6 +164,7 @@ function editorServer(access: ProjectAccess) {
     if (job.status === "ready") result.content.push({ type: "image", mimeType: job.mimeType, data: job.data });
     return { result, detail: "Frame " + frame + " at revision " + revision + " · " + status };
   }));
+  registerWorkflows(server,access,call);
   return server;
 }
 

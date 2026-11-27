@@ -59,8 +59,28 @@ test("a real Codex subprocess receives only the project namespace and examines t
           },
           inspect_source: { kind: "source_contact_sheet", assetId: "source", timestampsMs: [0, 1000] },
         };
+        const reviewId = "4f2b91d2-dc23-47ff-8d37-eab9d660989a";
+        if (params.name === "rough_cut")
+          values.rough_cut =
+            params.arguments.action === "commit"
+              ? {
+                  kind: "committed_rough_cut",
+                  reviewId,
+                  baseRevision: 2,
+                  previewFrames: [30],
+                  pauseCount: 1,
+                  captionCount: 2,
+                  edit: { revision: 3 },
+                }
+              : { kind: "rough_cut_candidate", reviewId, baseRevision: 2, previewFrames: [30], frame: 30 };
+        values.start_export = { exportId: reviewId, revision: 3, status: "queued" };
+        values.export_status = { exportId: reviewId, revision: 3, status: "rendering" };
         const content: object[] = [{ type: "text", text: JSON.stringify(values[params.name]) }];
-        if (params.name === "render_frame" || params.name === "inspect_source")
+        if (
+          params.name === "render_frame" ||
+          params.name === "inspect_source" ||
+          (params.name === "rough_cut" && params.arguments.action === "preview")
+        )
           content.push({
             type: "image",
             mimeType: "image/png",
@@ -103,6 +123,31 @@ test("a real Codex subprocess receives only the project namespace and examines t
       "Model received the source contact sheet",
       "Model received the rendered frame",
     ]);
+    calls.length = 0;
+    activities.length = 0;
+    const cut = await executeTurn(
+      {
+        ...opts,
+        context: { clipId: "footage" },
+        prompt: "Make a rough cut. Preview top captions then bottom. Commit, inspect and start an export.",
+      },
+      model,
+    );
+    expect(calls).toEqual([
+      "read_project",
+      "rough_cut",
+      "rough_cut",
+      "rough_cut",
+      "render_frame",
+      "start_export",
+      "export_status",
+    ]);
+    expect(activities.filter((s) => s.startsWith("Model received"))).toEqual([
+      "Model received the candidate frame",
+      "Model received the candidate frame",
+      "Model received the rendered frame",
+    ]);
+    expect(cut).toContain("saved at revision 3");
     const obs = await (await fetch(fixture.url.origin + "/observations")).json();
     expect(obs.nativeImages).toBeGreaterThan(0);
     for (const seen of obs.toolsets)

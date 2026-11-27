@@ -1,0 +1,111 @@
+.rough-cut-open {
+  margin-left: auto;
+  white-space: normal;
+  text-align: right;
+}
+.rough-cut-dialog {
+  width: min(38rem, calc(100vw - 1.5rem));
+  max-height: 88dvh;
+  padding: 0;
+  border: 1px solid #48433b;
+  border-radius: 14px;
+  background: #181816;
+  color: #f4f0e8;
+  box-shadow: 0 28px 90px #000b;
+}
+.rough-cut-dialog::backdrop {
+  background: #0a0909ba;
+}
+.rough-cut-body {
+  padding: 1rem 1.25rem 1.3rem;
+  display: grid;
+  gap: 1rem;
+  overflow-wrap: anywhere;
+}
+.rough-cut-controls,
+.rough-cut-actions {
+  display: flex;
+  align-items: end;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+.rough-cut-controls label {
+  flex: 1 1 14rem;
+}
+.rough-cut-body label {
+  display: grid;
+  gap: 0.35rem;
+  color: #c9c3b8;
+  font-size: 0.78rem;
+  min-width: 0;
+}
+.rough-cut-body select,
+.rough-cut-body input {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: #eee9e0;
+  background: #11110f;
+  border: 1px solid #49463f;
+  border-radius: 0.4rem;
+  padding: 0.55rem;
+}
+.rough-cut-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+}
+.rough-cut-options p,
+.rough-cut-options button {
+  grid-column: 1/-1;
+}
+.rough-cut-heading small,
+.rough-cut-player span {
+  color: #c8b18e;
+  font-size: 0.75rem;
+}
+.rough-cut-heading h3 {
+  margin: 0.3rem 0 0;
+  line-height: 1.35;
+}
+.rough-cut-passage,
+.rough-cut-body p {
+  margin: 0;
+}
+.rough-cut-player {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.7rem;
+  border: 1px solid #39372f;
+  border-radius: 0.6rem;
+  background: #10100f;
+}
+@media (max-width: 520px) {
+  .rough-cut-options {
+    grid-template-columns: 1fr;
+  }
+  .rough-cut-dialog {
+    max-height: 92dvh;
+  }
+  .rough-cut-open {
+    max-width: 54%;
+    font-size: 0.72rem;
+  }
+}
+
+.caption-appearance {
+  grid-column: 1/-1;
+}
+.caption-appearance > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  padding-top: 0.6rem;
+}
+.caption-appearance label {
+  flex: 1 1 6rem;
+}
+.caption-appearance input[type="color"] {
+  height: 2.35rem;
+  padding: 0.25rem;
+}

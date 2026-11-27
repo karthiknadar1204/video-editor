@@ -9,6 +9,7 @@ import { AssistantPanel } from "./assistant-panel";
 import { CodexConnect } from "./codex-connect";
 import { AddClip, EditClip } from "./clip-form";
 import { MediaLibrary } from "./media-library";
+import { RoughCutReview } from "./rough-cut-review";
 import { TimelinePanel } from "./timeline-panel";
 import { useTimeline } from "./use-timeline";
 import "./editor.css";
@@ -109,6 +110,7 @@ export function Editor({ initial }: { initial: ProjectSnapshot }) {
         <>{message || (status === "opening" ? "Opening editor…" : status === "saving" ? "Saving…" : [!online && "Offline", hasDraft && "Unsaved changes"].filter(Boolean).join(" · ") || "Saved")}
           {status === "retry" && <button onClick={() => void retry()}>Retry save</button>}
           {editable && hasDraft && <button onClick={() => { clearDraft(); resetForm(n => n + 1); }}>Discard draft</button>}</>}
+      <RoughCutReview project={project} selected={selected} editable={saved} onChange={reload} />
     </div>
     <nav className="mobile-panels" aria-label="Studio panels">{["Timeline", "Assistant"].map(tab =>
       <button key={tab} aria-pressed={mobileTab === tab.toLowerCase()} onClick={() => setMobileTab(tab.toLowerCase())}>{tab}</button>)}</nav>

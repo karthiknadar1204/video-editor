@@ -1,9 +1,15 @@
 import { executeTurn } from "../../apps/runner/src/codex";
 
 async function main() {
-  const input = (await Bun.stdin.json()) as { mcpUrl: string; token: string; prompt: string };
+  const input = (await Bun.stdin.json()) as {
+    mcpUrl: string;
+    token: string;
+    prompt: string;
+    minCandidateImages?: number;
+  };
   const live = process.env.E2E_LIVE_CODEX === "1";
-  let receivedFrame = false;
+  let receivedFrame = false,
+    receivedCandidates = 0;
   const reply = await executeTurn(
     {
       ...input,
@@ -12,7 +18,10 @@ async function main() {
       runId: crypto.randomUUID(),
       context: { external: true },
       signal: AbortSignal.timeout(180_000),
-      onEvent: (event) => { if (event === "Model received the rendered frame") receivedFrame = true; },
+      onEvent: (event) => {
+        if (event === "Model received the rendered frame") receivedFrame = true;
+        if (event === "Model received the candidate frame") receivedCandidates++;
+      },
     },
     {
       model: process.env.CUTROOM_CODEX_MODEL ?? "gpt-5.5",
@@ -20,6 +29,8 @@ async function main() {
       apiKey: live ? (process.env.OPENAI_API_KEY ?? "") : "fixture-only",
     },
   );
+  if (receivedCandidates < (input.minCandidateImages ?? 0))
+    throw new Error("The external model did not receive the candidate image.");
   if (!receivedFrame) throw new Error("The external model did not receive the rendered frame.");
   process.stdout.write(reply);
 }

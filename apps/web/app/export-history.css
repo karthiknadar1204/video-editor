@@ -1,0 +1,15 @@
+.export-history { width:min(490px,94vw); max-height:78dvh; text-align:left; padding:0; color:#ece8e1; background:#19191d; }
+.export-history header,.export-heading,.export-links { display:flex; align-items:center; gap:12px; }
+.export-history header { justify-content:space-between; padding:16px 20px; border-bottom:1px solid #424047; }
+.export-history h2 { margin:0; font-size:18px; }
+.export-history ul { list-style:none; padding:0; margin:0; }
+.export-history li { display:grid; gap:6px; padding:16px 20px; border-bottom:1px solid #37363d; }
+.export-history small { color:#bbb6b0; }
+.export-heading { justify-content:space-between; font-size:14px; }
+.export-heading span { color:#ecc18c; font-size:12px; }
+.export-heading [data-state=completed] { color:#9ad9ba; }
+.export-links { margin-top:6px; flex-wrap:wrap; }
+.export-links a { color:#f2c68f; text-underline-offset:3px; }
+.export-history p { margin:6px 0; color:#ded2c4; }
+.export-history>p,.export-history>button { margin:16px 20px; }
+.export-history progress { width:100%; accent-color:#dca76e; }

@@ -2,7 +2,12 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 
 // Playwright runs in Node. Start the external Bun client independently and pass its project credential on stdin.
-export function runExternalCodex(input: { mcpUrl: string; token: string; prompt: string }): Promise<string> {
+export function runExternalCodex(input: {
+  mcpUrl: string;
+  token: string;
+  prompt: string;
+  minCandidateImages?: number;
+}): Promise<string> {
   const live = process.env.E2E_LIVE_CODEX === "1";
   const env = {
     PATH: process.env.PATH,

@@ -10,6 +10,9 @@ export const toolNames = [
   "render_frame",
   "search_transcript",
   "inspect_source",
+  "rough_cut",
+  "start_export",
+  "export_status",
 ] as const;
 const toolName = z.enum(toolNames);
 const namespace = "mcp__cutroom";
@@ -95,7 +98,7 @@ const event = (type: string, data: object) =>
 // The CLI also declares general computer tools. The provider accepts exactly one native MCP namespace,
 // and validates the complete upstream response before emitting any callable item back to the CLI.
 const nativeImage = z.object({ type: z.literal("input_image"), image_url: z.string().startsWith("data:image/") });
-const imageTool = z.enum(["render_frame", "inspect_source"]);
+const imageTool = z.enum(["render_frame", "inspect_source", "rough_cut"]);
 const imageCall = z.object({
   type: z.literal("function_call"),
   namespace: z.literal(namespace),
