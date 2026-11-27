@@ -10,11 +10,16 @@ function partId(operationId: string, kind: "clip" | "group", index: number) {
   return operationId.slice(0, 180) + ":" + kind + ":" + index;
 }
 
-function slice(clip: Clip, from: number, to: number): Clip {
+export function sliceClip(clip: Clip, from: number, to: number): Clip {
   const range = { start: from, duration: to - from };
-  return clip.kind === "media"
-    ? { ...clip, ...range, sourceStart: clip.sourceStart + from - clip.start }
-    : { ...clip, ...range };
+  if (clip.kind === "media") return { ...clip, ...range, sourceStart: clip.sourceStart + from - clip.start };
+  if (!clip.caption) return { ...clip, ...range };
+  const offset = from - clip.start;
+  const words = clip.caption.words.flatMap(word => {
+    const first = Math.max(0, word.from - offset), last = Math.min(range.duration, word.to - offset);
+    return first < last ? [{ ...word, from: first, to: last }] : [];
+  });
+  return { ...clip, ...range, text: words.map(w => w.text).join(" ") || clip.text, caption: { ...clip.caption, words } };
 }
 
 function finish(t: Timeline): Timeline {
@@ -69,9 +74,9 @@ function ripple(t: Timeline, selected: Clip, op: Extract<Change, { type: "ripple
       clips.push({ ...c, start: c.start - length, linkId: tailLink });
       continue;
     }
-    if (c.start < from) clips.push(slice(c, c.start, from));
+    if (c.start < from) clips.push(sliceClip(c, c.start, from));
     if (end(c) > to) {
-      const tail = slice(c, to, end(c));
+      const tail = sliceClip(c, to, end(c));
       clips.push({ ...tail, start: from, linkId: tailLink, id: c.start < from ? partId(op.cutId, "clip", index) : c.id });
     }
   }
@@ -89,6 +94,13 @@ function apply(t: Timeline, op: Change) {
     t.clips.push({ ...op.clip });
     return;
   }
+  if (op.type === "roughCut" || op.type === "restorePassage") {
+    const changed = new Set([...op.remove, ...op.put.map(c => c.id)]);
+    for (const c of t.clips) if (changed.has(c.id)) unlocked(t, c.track);
+    for (const c of op.put) unlocked(t, c.track);
+    t.clips = [...t.clips.filter(c => !changed.has(c.id)), ...op.put];
+    return;
+  }
   if (op.type === "link") {
     const members = op.ids.map(id => t.clips.find(c => c.id === id));
     if (new Set(op.ids).size < 2 || members.some(c => !c || c.track === "music")) throw new EditError("Select at least two linkable clips.");
@@ -103,7 +115,7 @@ function apply(t: Timeline, op: Change) {
   if (op.type === "rippleDelete") return ripple(t, selected, op);
   if (op.type === "text") {
     if (selected.kind !== "text") throw new EditError("Select a title or caption to change text.");
-    selected.text = op.text;
+    if (op.text !== selected.text) { selected.text = op.text; delete selected.caption; }
     return;
   }
   if (op.type === "volume") {
@@ -145,14 +157,14 @@ function apply(t: Timeline, op: Change) {
         // A linked caption inside the shot keeps its own boundaries until a trim reaches it.
         const from = op.edge === "left" ? (c.start === oldStart ? op.frame : Math.max(c.start, op.frame)) : c.start;
         const to = op.edge === "right" ? (end(c) === oldEnd ? op.frame : Math.min(end(c), op.frame)) : end(c);
-        return from < to ? [slice(c, from, to)] : [];
+        return from < to ? [sliceClip(c, from, to)] : [];
       }
       case "split": {
         const linkId = c.linkId === null ? null : partId(op.rightId, "group", 0);
         if (end(c) <= op.frame) return [c];
         if (c.start >= op.frame) return [{ ...c, linkId }];
         const rightId = c.id === selected.id ? op.rightId : partId(op.rightId, "clip", index);
-        return [slice(c, c.start, op.frame), { ...slice(c, op.frame, end(c)), id: rightId, linkId }];
+        return [sliceClip(c, c.start, op.frame), { ...sliceClip(c, op.frame, end(c)), id: rightId, linkId }];
       }
     }
   });
@@ -160,14 +172,17 @@ function apply(t: Timeline, op: Change) {
 
 export type Patch = { put: Clip[]; remove: string[]; lockedTracks: Track[] };
 
+export function sameClip(a: Clip, b: Clip) {
+  return JSON.stringify(clipSchema.parse(a)) === JSON.stringify(clipSchema.parse(b));
+}
+
 function difference(before: Timeline, after: Timeline): Patch {
   const old = new Map(before.clips.map(c => [c.id, c]));
   const next = new Set(after.clips.map(c => c.id));
   return {
     put: after.clips.filter(c => {
       const prior = old.get(c.id);
-      return !prior || Object.keys(c).length !== Object.keys(prior).length ||
-        Object.entries(c).some(([key, value]) => Reflect.get(prior, key) !== value);
+      return !prior || !sameClip(prior, c);
     }),
     remove: before.clips.filter(c => !next.has(c.id)).map(c => c.id),
     lockedTracks: after.lockedTracks,

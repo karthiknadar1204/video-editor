@@ -10,6 +10,16 @@ export const fitSchema = z.enum(["cover", "contain"]);
 export const rotationSchema = z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]);
 const fontSize = z.int().min(8).max(400);
 const color = z.string().regex(/^#[0-9a-f]{6}$/i);
+export const captionLookSchema = z.strictObject({
+  style: z.enum(["readable", "highlight"]).default("readable"),
+  font: z.enum(["sans", "serif", "mono"]).default("sans"), placement: z.enum(["top", "center", "bottom"]).default("bottom"),
+  color: color.default("#ffffff"), highlightColor: color.default("#ffcf61"), fontSize: fontSize.optional(),
+});
+const timedCaption = z.strictObject({
+  reviewId: id, style: z.enum(["readable", "highlight"]), font: z.enum(["sans", "serif", "mono"]), highlightColor: color,
+  words: z.array(z.strictObject({ text: z.string().min(1).max(500), from: frame, to: z.int().positive() })
+    .refine(w => w.to > w.from)).max(32),
+});
 const common = {
   id, start: frame, duration: z.int().positive(), linkId: id.nullable(),
   x: coordinate, y: coordinate,
@@ -18,7 +28,7 @@ export const clipSchema = z.discriminatedUnion("kind", [
   z.strictObject({ ...common, kind: z.literal("media"), track: z.enum(["video", "speech", "music"]),
     assetId: id, sourceStart: frame, volume: z.number().min(0).max(1), fit: fitSchema.optional(), rotation: rotationSchema.optional() }),
   z.strictObject({ ...common, kind: z.literal("text"), track: z.enum(["title", "caption"]),
-    text: z.string().trim().min(1).max(2000), fontSize, color }),
+    text: z.string().trim().min(1).max(2000), fontSize, color, caption: timedCaption.optional() }),
 ]);
 export type Clip = z.infer<typeof clipSchema>;
 export const assetSchema = z.object({
@@ -60,8 +70,11 @@ export const changeSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("volume"), id, volume: z.number().min(0).max(1) }),
   z.strictObject({ type: z.literal("lock"), track: trackSchema, locked: z.boolean() }),
   z.strictObject({ type: z.literal("link"), ids: z.array(id).min(2), linkId: id }),
+  z.strictObject({ type: z.literal("roughCut"), reviewId: id, remove: z.array(id), put: z.array(clipSchema) }),
+  z.strictObject({ type: z.literal("restorePassage"), reviewId: id, cutId: id, remove: z.array(id), put: z.array(clipSchema) }),
 ]);
 export type Change = z.infer<typeof changeSchema>;
+export function isReviewOperation(op: Change) { return op.type === "roughCut" || op.type === "restorePassage"; }
 const request = { requestId: z.uuid(), expectedRevision: frame };
 export const editSchema = z.discriminatedUnion("kind", [
   z.strictObject({ ...request, kind: z.literal("edit"), operations: z.array(changeSchema).min(1).max(200) }),
@@ -75,6 +88,7 @@ export function editLabel(command: EditRequest) {
     add: "Insert clip", move: "Move clip", trim: "Trim clip", split: "Split clip", delete: "Delete clip",
     rippleDelete: "Ripple delete", text: "Edit text", position: "Reposition clip", framing: "Frame shot",
     textStyle: "Style text", volume: "Adjust volume", lock: "Change track lock", link: "Link clips",
+    roughCut: "Rough cut and captions", restorePassage: "Restore passage",
   };
   return [...new Set(command.operations.map(op => names[op.type]))].join(" + ");
 }

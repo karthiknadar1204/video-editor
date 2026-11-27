@@ -1,6 +1,6 @@
 import { loadFont } from "@remotion/fonts";
 import type { Clip, Timeline } from "@editor/timeline";
-import { AbsoluteFill, Html5Audio, OffthreadVideo, Sequence, staticFile, useVideoConfig } from "remotion";
+import { AbsoluteFill, Html5Audio, OffthreadVideo, Sequence, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 
 if (typeof document !== "undefined") {
   void loadFont({ family: "Cutroom Inter", url: staticFile("fonts/inter-latin.woff2"), weight: "100 900" });
@@ -8,7 +8,19 @@ if (typeof document !== "undefined") {
 
 function Content({ clip, assets }: { clip: Clip; assets: Timeline["assets"] }) {
   const { width, height } = useVideoConfig();
+  const frame = useCurrentFrame();
   if (clip.kind === "text") {
+    if (clip.caption) {
+      const fonts = { sans: '"Cutroom Inter", sans-serif', serif: 'Georgia, serif', mono: 'monospace' };
+      const cue = clip.caption;
+      return <div style={{ position: "absolute", left: clip.x, top: clip.y, width: Math.round(width * .88), textAlign: "center",
+        fontFamily: fonts[cue.font], color: clip.color, fontWeight: 650, fontSize: clip.fontSize, lineHeight: 1.23, overflowWrap: "anywhere" }}>
+        {cue.words.length > 0 && <span style={{ background: "rgba(0,0,0,.78)", padding: "0.06em 0.20em", boxDecorationBreak: "clone",
+          WebkitBoxDecorationBreak: "clone", borderRadius: ".13em" }}>{cue.words.map((word, i) =>
+          <span key={i} style={{ color: cue.style === "highlight" && frame >= word.from && frame < word.to ? cue.highlightColor : clip.color }}>
+            {i ? " " : ""}{word.text}</span>)}</span>}
+      </div>;
+    }
     return <div style={{ position: "absolute", left: clip.x, top: clip.y, color: clip.color,
       fontFamily: '"Cutroom Inter", sans-serif', fontSize: clip.fontSize, lineHeight: 1, fontWeight: 650,
       letterSpacing: "-0.06em", textShadow: "0 2px 12px rgba(0,0,0,.55)", whiteSpace: "pre-wrap" }}>{clip.text}</div>;

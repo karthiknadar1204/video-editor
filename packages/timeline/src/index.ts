@@ -4,6 +4,7 @@ export * from "./model";
 export * from "./edits";
 export * from "./codex";
 export * from "./footage";
+export * from "./rough-cut";
 
 export const canvasFormats = ["landscape", "portrait", "square"] as const;
 export type CanvasFormat = typeof canvasFormats[number];
